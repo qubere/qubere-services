@@ -1,0 +1,12 @@
+package ai.qubere.agent.runtime;
+
+public enum AgentPipelineStep {
+    AGENT_RESOLUTION,
+    POLICY_RESOLUTION,
+    AUTHORIZATION,
+    INPUT_GUARDRAILS,
+    EXECUTION_STARTED,
+    AGENT_INVOCATION,
+    EXECUTION_COMPLETED,
+    EXECUTION_FAILED
+}

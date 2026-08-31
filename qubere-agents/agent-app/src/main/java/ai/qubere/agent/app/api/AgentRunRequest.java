@@ -1,0 +1,17 @@
+package ai.qubere.agent.app.api;
+
+import ai.qubere.agent.core.AgentRunOptions;
+
+import java.util.Map;
+
+public record AgentRunRequest(
+        Map<String, Object> input,
+        String agentVersion,
+        AgentRunOptions options,
+        Boolean async,
+        String callbackUrl
+) {
+    public AgentRunRequest {
+        input = input == null ? Map.of() : Map.copyOf(input);
+    }
+}
