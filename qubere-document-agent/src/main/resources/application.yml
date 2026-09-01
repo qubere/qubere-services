@@ -1,0 +1,121 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: qubere-document-agent
+  ai:
+    model:
+      chat: ${SPRING_AI_MODEL_CHAT:none}
+  profiles:
+    active: ${AGENT_DB:local}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: ${AGENT_JPA_DDL_AUTO:validate}
+    properties:
+      hibernate:
+        format_sql: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+agent-platform:
+  ai:
+    default-provider: ${AGENT_AI_PROVIDER:openai}
+    default-model: ${AGENT_AI_MODEL:gpt-4.1-mini}
+    max-estimated-cost-usd: ${AGENT_MAX_COST_USD:0}
+    spring:
+      enabled: ${AGENT_SPRING_AI_ENABLED:false}
+  memory:
+    enabled: ${AGENT_MEMORY_ENABLED:true}
+    provider: ${AGENT_MEMORY_PROVIDER:in-memory}
+    max-results: ${AGENT_MEMORY_MAX_RESULTS:5}
+  tools:
+    enabled: ${AGENT_TOOLS_ENABLED:true}
+    audit-enabled: ${AGENT_TOOL_AUDIT_ENABLED:true}
+    approval-required-for-destructive: ${AGENT_TOOL_APPROVAL_DESTRUCTIVE:true}
+    max-tool-calls: ${AGENT_MAX_TOOL_CALLS:20}
+  prompts:
+    provider: ${AGENT_PROMPT_PROVIDER:database}
+    seed-enabled: ${AGENT_PROMPT_SEED_ENABLED:true}
+    seeds:
+      - prompt-id: document.intake.default
+        agent-id: document.intake
+        version: 0.1.0
+        status: ACTIVE
+        system-template: Qubere Document Intake classifies trade document packets from visible evidence only.
+        user-template: Classify the supplied document metadata and parsed context. Route uncertain packets to review.
+        metadata:
+          source: app-frontend migration
+          original: apps/custom/src/modules/intake/documentIntakeAgent.ts
+      - prompt-id: document.intelligence.default
+        agent-id: document.intelligence
+        version: 0.1.0
+        status: ACTIVE
+        system-template: Qubere Document Intelligence extracts trade metadata and line-item facts only from grounded document context.
+        user-template: Extract invoice, party, origin, shipment, and line-item facts from the supplied QubereDocumentContext.
+        metadata:
+          source: app-frontend migration
+          original: apps/custom/src/modules/agents/documentIntelligenceAgent.ts
+  governance:
+    enabled: ${AGENT_GOVERNANCE_ENABLED:true}
+    max-runs-per-tenant-per-minute: ${AGENT_MAX_RUNS_PER_TENANT_PER_MINUTE:0}
+    max-runs-per-actor-per-minute: ${AGENT_MAX_RUNS_PER_ACTOR_PER_MINUTE:0}
+    max-estimated-cost-usd-per-run: ${AGENT_MAX_ESTIMATED_COST_USD_PER_RUN:0}
+    estimated-cost-usd-per-thousand-tokens: ${AGENT_ESTIMATED_COST_USD_PER_1K_TOKENS:0}
+  security:
+    authorization-mode: ${AGENT_AUTHORIZATION_MODE:permissive}
+    require-tenant: ${AGENT_AUTH_REQUIRE_TENANT:true}
+    require-actor: ${AGENT_AUTH_REQUIRE_ACTOR:true}
+  admin:
+    enabled: ${AGENT_ADMIN_ENABLED:false}
+    token: ${AGENT_ADMIN_TOKEN:}
+  registry:
+    strict-descriptor-validation: true
+    default-versions:
+      document.intake: 0.1.0
+      document.intelligence: 0.1.0
+  runtime:
+    default-mode: recommend
+    max-steps: 8
+    temperature: 0.1
+    max-output-tokens: 4096
+    allow-tool-calls: true
+    require-human-approval: false
+    include-evidence: true
+    include-recommendations: true
+    timeout-seconds: ${AGENT_TIMEOUT_SECONDS:120}
+    max-retries: ${AGENT_MAX_RETRIES:2}
+    log-prompts: ${AGENT_LOG_PROMPTS:false}
+    log-tool-results: ${AGENT_LOG_TOOL_RESULTS:false}
+  definitions:
+    "[document.intake]":
+      enabled: ${DOCUMENT_INTAKE_AGENT_ENABLED:true}
+      model-provider: ${DOCUMENT_INTAKE_MODEL_PROVIDER:${AGENT_AI_PROVIDER:openai}}
+      model-name: ${DOCUMENT_INTAKE_MODEL:${AGENT_AI_MODEL:gpt-4.1-mini}}
+      prompt-version: ${DOCUMENT_INTAKE_PROMPT_VERSION:0.1.0}
+      memory-enabled: ${DOCUMENT_INTAKE_MEMORY_ENABLED:true}
+      max-memory-results: ${DOCUMENT_INTAKE_MAX_MEMORY_RESULTS:3}
+      max-tool-calls: ${DOCUMENT_INTAKE_MAX_TOOL_CALLS:2}
+      timeout-seconds: ${DOCUMENT_INTAKE_TIMEOUT_SECONDS:60}
+      max-retries: ${DOCUMENT_INTAKE_MAX_RETRIES:1}
+      require-human-approval: ${DOCUMENT_INTAKE_REQUIRE_APPROVAL:false}
+      allowed-tools:
+        - document.context.lookup
+    "[document.intelligence]":
+      enabled: ${DOCUMENT_INTELLIGENCE_AGENT_ENABLED:true}
+      model-provider: ${DOCUMENT_INTELLIGENCE_MODEL_PROVIDER:${AGENT_AI_PROVIDER:openai}}
+      model-name: ${DOCUMENT_INTELLIGENCE_MODEL:${AGENT_AI_MODEL:gpt-4.1-mini}}
+      prompt-version: ${DOCUMENT_INTELLIGENCE_PROMPT_VERSION:0.1.0}
+      memory-enabled: ${DOCUMENT_INTELLIGENCE_MEMORY_ENABLED:true}
+      max-memory-results: ${DOCUMENT_INTELLIGENCE_MAX_MEMORY_RESULTS:5}
+      max-tool-calls: ${DOCUMENT_INTELLIGENCE_MAX_TOOL_CALLS:4}
+      timeout-seconds: ${DOCUMENT_INTELLIGENCE_TIMEOUT_SECONDS:120}
+      max-retries: ${DOCUMENT_INTELLIGENCE_MAX_RETRIES:1}
+      require-human-approval: ${DOCUMENT_INTELLIGENCE_REQUIRE_APPROVAL:false}
+      allowed-tools:
+        - document.context.lookup

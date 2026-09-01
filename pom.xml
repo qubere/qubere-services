@@ -23,6 +23,7 @@
         <module>agent-core</module>
         <module>agent-storage</module>
         <module>agent-app</module>
+        <module>qubere-document-agent</module>
     </modules>
 
     <properties>
@@ -58,4 +59,5 @@
         </pluginManagement>
     </build>
 </project>
+
 

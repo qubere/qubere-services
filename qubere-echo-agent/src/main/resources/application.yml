@@ -1,0 +1,171 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: qubere-agents
+  ai:
+    model:
+      chat: ${SPRING_AI_MODEL_CHAT:none}
+  profiles:
+    active: ${AGENT_DB:local}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: ${AGENT_JPA_DDL_AUTO:validate}
+    properties:
+      hibernate:
+        format_sql: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+agent-platform:
+  ai:
+    default-provider: ${AGENT_AI_PROVIDER:openai}
+    default-model: ${AGENT_AI_MODEL:gpt-4.1-mini}
+    max-estimated-cost-usd: ${AGENT_MAX_COST_USD:0}
+    spring:
+      enabled: ${AGENT_SPRING_AI_ENABLED:false}
+  memory:
+    enabled: ${AGENT_MEMORY_ENABLED:true}
+    provider: ${AGENT_MEMORY_PROVIDER:in-memory}
+    max-results: ${AGENT_MEMORY_MAX_RESULTS:5}
+  tools:
+    enabled: ${AGENT_TOOLS_ENABLED:true}
+    audit-enabled: ${AGENT_TOOL_AUDIT_ENABLED:true}
+    approval-required-for-destructive: ${AGENT_TOOL_APPROVAL_DESTRUCTIVE:true}
+    max-tool-calls: ${AGENT_MAX_TOOL_CALLS:20}
+  prompts:
+    provider: ${AGENT_PROMPT_PROVIDER:database}
+    seed-enabled: ${AGENT_PROMPT_SEED_ENABLED:true}
+    seeds:
+      - prompt-id: generic.echo-analysis.default
+        agent-id: generic.echo-analysis
+        version: 0.1.0
+        status: ACTIVE
+        system-template: Reference prompt for the generic echo analysis agent.
+        user-template: Analyze and echo the caller input for diagnostics.
+        metadata:
+          source: application.yml
+          sample: true
+      - prompt-id: generic.tool-echo-analysis.default
+        agent-id: generic.tool-echo-analysis
+        version: 0.1.0
+        status: ACTIVE
+        system-template: Reference prompt for the tool-backed echo analysis agent.
+        user-template: Use allowed read-only tools when useful, then summarize the diagnostic result.
+        metadata:
+          source: application.yml
+          sample: true
+      - prompt-id: generic.ai-analysis.default
+        agent-id: generic.ai-analysis
+        version: 0.1.0
+        status: ACTIVE
+        system-template: You are a concise diagnostic analysis agent. Return structured output only.
+        user-template: Analyze the message and classify sentiment, summary, confidence, and recommended next action.
+        metadata:
+          source: application.yml
+          sample: true
+  governance:
+    enabled: ${AGENT_GOVERNANCE_ENABLED:true}
+    max-runs-per-tenant-per-minute: ${AGENT_MAX_RUNS_PER_TENANT_PER_MINUTE:0}
+    max-runs-per-actor-per-minute: ${AGENT_MAX_RUNS_PER_ACTOR_PER_MINUTE:0}
+    max-estimated-cost-usd-per-run: ${AGENT_MAX_ESTIMATED_COST_USD_PER_RUN:0}
+    estimated-cost-usd-per-thousand-tokens: ${AGENT_ESTIMATED_COST_USD_PER_1K_TOKENS:0}
+  security:
+    authorization-mode: ${AGENT_AUTHORIZATION_MODE:permissive}
+    require-tenant: ${AGENT_AUTH_REQUIRE_TENANT:true}
+    require-actor: ${AGENT_AUTH_REQUIRE_ACTOR:true}
+  evaluation:
+    dataset-locations:
+      - ${AGENT_EVALUATION_DATASET_LOCATION:classpath*:agent-evaluation/*.json}
+    fail-on-invalid-dataset: ${AGENT_EVALUATION_FAIL_ON_INVALID_DATASET:true}
+  admin:
+    enabled: ${AGENT_ADMIN_ENABLED:false}
+    token: ${AGENT_ADMIN_TOKEN:}
+  observability:
+    open-telemetry:
+      enabled: ${AGENT_OTEL_ENABLED:false}
+      service-name: ${AGENT_OTEL_SERVICE_NAME:qubere-agents}
+      include-tenant: ${AGENT_OTEL_INCLUDE_TENANT:true}
+      include-actor: ${AGENT_OTEL_INCLUDE_ACTOR:false}
+      max-buffered-events: ${AGENT_OTEL_MAX_BUFFERED_EVENTS:1000}
+  async:
+    enabled: ${AGENT_ASYNC_ENABLED:true}
+    worker-enabled: ${AGENT_ASYNC_WORKER_ENABLED:false}
+    poll-interval-millis: ${AGENT_ASYNC_POLL_INTERVAL_MILLIS:1000}
+    max-runs-per-poll: ${AGENT_ASYNC_MAX_RUNS_PER_POLL:1}
+    approval-expiration-minutes: ${AGENT_APPROVAL_EXPIRATION_MINUTES:60}
+    queue:
+      type: ${AGENT_PLATFORM_ASYNC_QUEUE_TYPE:memory}
+    callback:
+      enabled: ${AGENT_CALLBACK_ENABLED:false}
+      max-attempts: ${AGENT_CALLBACK_MAX_ATTEMPTS:3}
+      retry-backoff-millis: ${AGENT_CALLBACK_RETRY_BACKOFF_MILLIS:500}
+      timeout-seconds: ${AGENT_CALLBACK_TIMEOUT_SECONDS:5}
+      signing-secret: ${AGENT_CALLBACK_SIGNING_SECRET:}
+  registry:
+    strict-descriptor-validation: true
+    default-versions:
+      generic.echo-analysis: 0.1.0
+      generic.tool-echo-analysis: 0.1.0
+      generic.ai-analysis: 0.1.0
+  runtime:
+    default-mode: recommend
+    max-steps: 8
+    temperature: 0.2
+    max-output-tokens: 2048
+    allow-tool-calls: true
+    require-human-approval: false
+    include-evidence: true
+    include-recommendations: true
+    timeout-seconds: ${AGENT_TIMEOUT_SECONDS:120}
+    max-retries: ${AGENT_MAX_RETRIES:2}
+    log-prompts: ${AGENT_LOG_PROMPTS:false}
+    log-tool-results: ${AGENT_LOG_TOOL_RESULTS:false}
+    response-detail: ${AGENT_RESPONSE_DETAIL:SUMMARY}
+    priority: ${AGENT_PRIORITY:NORMAL}
+  definitions:
+    "[generic.echo-analysis]":
+      enabled: ${ECHO_AGENT_ENABLED:true}
+      model-provider: ${ECHO_AGENT_MODEL_PROVIDER:openai}
+      model-name: ${ECHO_AGENT_MODEL:gpt-4.1-mini}
+      prompt-version: ${ECHO_AGENT_PROMPT_VERSION:0.1.0}
+      memory-enabled: ${ECHO_AGENT_MEMORY_ENABLED:true}
+      max-memory-results: ${ECHO_AGENT_MAX_MEMORY_RESULTS:3}
+      max-tool-calls: ${ECHO_AGENT_MAX_TOOL_CALLS:4}
+      timeout-seconds: ${ECHO_AGENT_TIMEOUT_SECONDS:30}
+      max-retries: ${ECHO_AGENT_MAX_RETRIES:1}
+      require-human-approval: ${ECHO_AGENT_REQUIRE_APPROVAL:false}
+      allowed-tools:
+        - echo.lookup
+    "[generic.tool-echo-analysis]":
+      enabled: ${TOOL_ECHO_AGENT_ENABLED:true}
+      model-provider: ${TOOL_ECHO_AGENT_MODEL_PROVIDER:${AGENT_AI_PROVIDER:openai}}
+      model-name: ${TOOL_ECHO_AGENT_MODEL:${AGENT_AI_MODEL:gpt-4.1-mini}}
+      prompt-version: ${TOOL_ECHO_AGENT_PROMPT_VERSION:0.1.0}
+      memory-enabled: ${TOOL_ECHO_AGENT_MEMORY_ENABLED:true}
+      max-memory-results: ${TOOL_ECHO_AGENT_MAX_MEMORY_RESULTS:3}
+      max-tool-calls: ${TOOL_ECHO_AGENT_MAX_TOOL_CALLS:3}
+      timeout-seconds: ${TOOL_ECHO_AGENT_TIMEOUT_SECONDS:30}
+      max-retries: ${TOOL_ECHO_AGENT_MAX_RETRIES:1}
+      require-human-approval: ${TOOL_ECHO_AGENT_REQUIRE_APPROVAL:false}
+      allowed-tools:
+        - echo.lookup
+    "[generic.ai-analysis]":
+      enabled: ${AI_ANALYSIS_AGENT_ENABLED:true}
+      model-provider: ${AI_ANALYSIS_AGENT_MODEL_PROVIDER:${AGENT_AI_PROVIDER:openai}}
+      model-name: ${AI_ANALYSIS_AGENT_MODEL:${AGENT_AI_MODEL:gpt-4.1-mini}}
+      prompt-version: ${AI_ANALYSIS_AGENT_PROMPT_VERSION:0.1.0}
+      memory-enabled: ${AI_ANALYSIS_AGENT_MEMORY_ENABLED:true}
+      max-memory-results: ${AI_ANALYSIS_AGENT_MAX_MEMORY_RESULTS:3}
+      max-tool-calls: ${AI_ANALYSIS_AGENT_MAX_TOOL_CALLS:0}
+      timeout-seconds: ${AI_ANALYSIS_AGENT_TIMEOUT_SECONDS:60}
+      max-retries: ${AI_ANALYSIS_AGENT_MAX_RETRIES:1}
+      require-human-approval: ${AI_ANALYSIS_AGENT_REQUIRE_APPROVAL:false}
+      allowed-tools: []
+
