@@ -1,0 +1,8 @@
+spring:
+  datasource:
+    url: ${AGENT_DATASOURCE_URL:jdbc:postgresql://localhost:5432/qubere_agents}
+    username: ${AGENT_DATASOURCE_USERNAME:postgres}
+    password: ${AGENT_DATASOURCE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect

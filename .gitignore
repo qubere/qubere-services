@@ -1,0 +1,17 @@
+.m2/
+target/
+*/target/
+*/logs/
+*.log
+
+# IDE / local workspace files
+.metadata/
+.settings/
+*/.settings/
+.classpath
+*/.classpath
+.project
+*/.project
+.factorypath
+*.iml
+.idea/

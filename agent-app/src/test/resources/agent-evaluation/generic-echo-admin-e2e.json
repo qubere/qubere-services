@@ -1,0 +1,19 @@
+{
+  "name": "generic-echo-admin-e2e",
+  "description": "Admin-triggered golden dataset for the generic echo reference agent.",
+  "metadata": {
+    "datasetVersion": "0.1.0",
+    "purpose": "admin-e2e"
+  },
+  "examples": [
+    {
+      "id": "echo-admin-case-1",
+      "agentId": "generic.echo-analysis",
+      "agentVersion": "0.1.0",
+      "input": {
+        "message": "hello from admin evaluation"
+      },
+      "expectedOutput": {}
+    }
+  ]
+}
