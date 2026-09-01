@@ -1,0 +1,20 @@
+{
+  "name": "generic-echo-smoke",
+  "description": "Classpath smoke dataset for the generic echo reference agent.",
+  "metadata": {
+    "datasetVersion": "0.1.0",
+    "agentId": "generic.echo-analysis",
+    "purpose": "local-smoke"
+  },
+  "examples": [
+    {
+      "id": "echo-smoke-1",
+      "agentId": "generic.echo-analysis",
+      "agentVersion": "0.1.0",
+      "input": {
+        "message": "hello from golden dataset"
+      },
+      "expectedOutput": {}
+    }
+  ]
+}
