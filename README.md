@@ -1,4 +1,4 @@
-﻿# Qubere Agent Platform
+# Qubere Agent Platform
 
 Generic Java 21, Spring Boot, and Spring AI framework for creating agentic AI systems.
 
@@ -10,7 +10,7 @@ Architecture reference:
 
 Qubere Agent Platform is a compact Maven framework for building reusable, governed agents. It keeps the public contract jar small, places most framework capabilities in `agent-core`, and keeps database/storage infrastructure in `agent-storage`.
 
-`agent-app` is not the framework itself. It is a reference Spring Boot host with REST APIs and a sample generic agent. Real applications can depend on `agent-api`, `agent-core`, and optionally `agent-storage`, or they can use `agent-app` while developing examples.
+`agent-app` is not the framework itself. It is a reference Spring Boot host with REST APIs and a sample generic agent. `qubere-document-agent` is the first real agent service, created to host document intake and document intelligence agents migrated from `app-frontend`. Real applications can depend on `agent-api`, `agent-core`, and optionally `agent-storage`, or they can use `agent-app` while developing examples.
 
 ## Current Capabilities
 
@@ -49,6 +49,7 @@ See `generic-agent-framework-spring-ai.md` sections `21` and `22` for the detail
 - `agent-core` - runtime models, orchestration, registry, policy resolution, AI adapter, tools, memory, prompts, async approval, observability, security, evaluation, governance, and replay.
 - `agent-storage` - portable JPA storage for execution records, approvals, pending commands, tool audits, prompt templates, and evaluation results.
 - `agent-app` - optional runnable Spring Boot API shell and sample generic agent.
+- `qubere-document-agent` - runnable Spring Boot service for document intake and document intelligence agents migrated from `app-frontend`.
 
 ## Build and test
 
@@ -84,6 +85,9 @@ Local H2 runtime, no external DB required:
 
 ```bash
 mvn -pl agent-app spring-boot:run
+
+# Document-agent service
+mvn -pl qubere-document-agent spring-boot:run
 ```
 
 Equivalent explicit runtime setting:
@@ -150,12 +154,27 @@ agent-platform:
     poll-interval-millis: 1000
     max-runs-per-poll: 1
     approval-expiration-minutes: 60
+    queue:
+      type: memory # memory for local dev; database uses agent-storage/JPA; kafka/rabbitmq/sqs are adapter extension points
     callback:
       enabled: false
       max-attempts: 3
       retry-backoff-millis: 500
       timeout-seconds: 5
       signing-secret: ""
+  security:
+    authorization-mode: permissive # permissive for local dev; strict requires tenant/actor and configured permissions
+    require-tenant: true
+    require-actor: true
+    allowed-tenants: []
+    required-run-permissions: []
+  observability:
+    open-telemetry:
+      enabled: false # foundation listener/exporter only; real OTLP exporter is a future adapter
+      service-name: qubere-agents
+      include-tenant: true
+      include-actor: false
+      max-buffered-events: 1000
   governance:
     enabled: true
     max-runs-per-tenant-per-minute: 0 # 0 disables this limiter
@@ -176,6 +195,8 @@ agent-platform:
       max-tool-calls: 4
       timeout-seconds: 30
 ```
+
+For strict authorization from environment variables, use Spring Boot relaxed binding names such as `AGENT_PLATFORM_SECURITY_AUTHORIZATION_MODE=strict`, `AGENT_PLATFORM_SECURITY_REQUIRED_RUN_PERMISSIONS=agents.run`, and `AGENT_PLATFORM_SECURITY_ALLOWED_TENANTS=tenant-a,tenant-b`.
 
 Callers can override these per run through `AgentRunOptions`. Null option values mean "use configured default".
 
@@ -233,5 +254,3 @@ If approval is required, the run returns `WAITING_FOR_APPROVAL` with an `approva
 ```http
 POST /api/agents/approvals/{approvalId}/approve
 ```
-
-

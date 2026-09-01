@@ -1,8 +1,0 @@
-ai.qubere.agent.runtime.config.AgentRuntimeAutoConfiguration
-ai.qubere.agent.tools.config.AgentToolsAutoConfiguration
-ai.qubere.agent.memory.config.AgentMemoryAutoConfiguration
-ai.qubere.agent.prompts.config.AgentPromptsAutoConfiguration
-ai.qubere.agent.async.config.AgentAsyncAutoConfiguration
-ai.qubere.agent.evaluation.config.AgentEvaluationInfrastructureAutoConfiguration
-ai.qubere.agent.evaluation.config.AgentEvaluationAutoConfiguration
-ai.qubere.agent.ai.config.AgentAiAutoConfiguration
