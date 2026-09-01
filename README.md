@@ -1,2 +1,2 @@
-# qubere-services
-Qubere Services
+# qubere-agents
+Qubere Agents
