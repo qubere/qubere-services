@@ -5,6 +5,7 @@ import ai.qubere.agent.api.AgentExecutionContext;
 import ai.qubere.agent.api.AgentInput;
 import ai.qubere.agent.api.AgentOutput;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface AgentExecutionStore {
@@ -33,5 +34,17 @@ public interface AgentExecutionStore {
 
     default Optional<AgentExecutionRecord> findByIdempotencyKey(String tenantId, String idempotencyKey) {
         return Optional.empty();
+    }
+
+    /**
+     * Returns every execution belonging to one orchestrated workflow, oldest first, so callers
+     * can reconstruct the full call tree of a multi-agent run. Implementations that do not
+     * persist workflow linkage return an empty list.
+     *
+     * @param workflowId workflow id shared by all executions in the orchestration
+     * @param limit      maximum number of records to return; implementations must bound results
+     */
+    default List<AgentExecutionRecord> findByWorkflowId(String workflowId, int limit) {
+        return List.of();
     }
 }

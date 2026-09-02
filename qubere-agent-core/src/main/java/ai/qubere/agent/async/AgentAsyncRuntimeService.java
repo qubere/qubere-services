@@ -88,7 +88,7 @@ public class AgentAsyncRuntimeService {
 
     public AgentAsyncRunHandle submit(String agentId, String agentVersion, AgentInput input, AgentExecutionContext context, AgentRunOptions options, String callbackUrl, String idempotencyKey) {
         RegisteredAgent registeredAgent = resolve(agentId, agentVersion);
-        ResolvedAgentPolicy policy = policyResolver.resolve(agentId, options);
+        ResolvedAgentPolicy policy = policyResolver.resolve(agentId, options, registeredAgent.descriptor().riskLevel());
         AgentExecutionContext runContext = ensureExecutionId(context);
         String normalizedIdempotencyKey = normalize(idempotencyKey);
         if (normalizedIdempotencyKey != null) {
@@ -132,7 +132,7 @@ public class AgentAsyncRuntimeService {
 
     public AgentAsyncRunHandle resumeApproved(String approvalId, String decidedBy) {
         AgentApprovalRequest existing = approvalStore.findById(approvalId)
-                .orElseThrow(() -> new IllegalArgumentException("Approval request not found: " + approvalId));
+                .orElseThrow(() -> new java.util.NoSuchElementException("Approval request not found: " + approvalId));
         if (existing.status() == AgentApprovalStatus.APPROVED) {
             return handleFor(existing.executionId(), existing.approvalId());
         }
@@ -167,7 +167,7 @@ public class AgentAsyncRuntimeService {
 
     public AgentAsyncRunHandle reject(String approvalId, String decidedBy) {
         AgentApprovalRequest existing = approvalStore.findById(approvalId)
-                .orElseThrow(() -> new IllegalArgumentException("Approval request not found: " + approvalId));
+                .orElseThrow(() -> new java.util.NoSuchElementException("Approval request not found: " + approvalId));
         if (existing.status() == AgentApprovalStatus.REJECTED) {
             return handleFor(existing.executionId(), existing.approvalId());
         }

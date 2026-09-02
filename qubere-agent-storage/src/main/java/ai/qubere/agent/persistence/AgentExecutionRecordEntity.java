@@ -35,6 +35,12 @@ public class AgentExecutionRecordEntity {
     @Column(name = "idempotency_key", length = 128)
     private String idempotencyKey;
 
+    @Column(name = "workflow_id", length = 64)
+    private String workflowId;
+
+    @Column(name = "parent_execution_id", length = 64)
+    private String parentExecutionId;
+
     @Enumerated(EnumType.STRING)    @Column(name = "status", length = 32, nullable = false)
     private AgentRunStatus status;
 
@@ -102,6 +108,22 @@ public class AgentExecutionRecordEntity {
 
     public void setIdempotencyKey(String idempotencyKey) {
         this.idempotencyKey = idempotencyKey;
+    }
+
+    public String getWorkflowId() {
+        return workflowId;
+    }
+
+    public void setWorkflowId(String workflowId) {
+        this.workflowId = workflowId;
+    }
+
+    public String getParentExecutionId() {
+        return parentExecutionId;
+    }
+
+    public void setParentExecutionId(String parentExecutionId) {
+        this.parentExecutionId = parentExecutionId;
     }
 
     public AgentRunStatus getStatus() {

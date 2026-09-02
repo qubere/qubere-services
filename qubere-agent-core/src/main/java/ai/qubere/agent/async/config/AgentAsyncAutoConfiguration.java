@@ -91,8 +91,12 @@ public class AgentAsyncAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "agent-platform.async.callback", name = "enabled", havingValue = "true")
-    AgentCallbackDispatcher httpAgentCallbackDispatcher(RestClient.Builder restClientBuilder, AgentPlatformProperties properties) {
-        return new HttpAgentCallbackDispatcher(restClientBuilder, properties);
+    AgentCallbackDispatcher httpAgentCallbackDispatcher(
+            RestClient.Builder restClientBuilder,
+            AgentPlatformProperties properties,
+            org.springframework.beans.factory.ObjectProvider<ai.qubere.agent.secrets.AgentSecretResolver> secretResolver
+    ) {
+        return new HttpAgentCallbackDispatcher(restClientBuilder, properties, secretResolver.getIfAvailable());
     }
 
     @Bean

@@ -1,256 +1,420 @@
-# Qubere Agent Platform
+# Qubere Agent Framework
 
-Generic Java 21, Spring Boot, and Spring AI framework for creating agentic AI systems.
+Qubere Agent Framework is a Java 21, Spring Boot, and Spring AI multi-module framework for building governed agentic services. It gives applications stable agent contracts, runtime policy resolution, tool governance, async approval flows, orchestration, durable memory, evaluation, and observability, with `qubere-echo-agent` and `qubere-document-agent` included as runnable reference hosts.
 
-Architecture reference:
+## Module structure
 
-`generic-agent-framework-spring-ai.md`
+- `qubere-agent-api` - stable agent contracts and descriptors
+- `qubere-agent-core` - runtime engine, policy resolution, tools, orchestration, memory, evaluation, security, observability
+- `qubere-agent-storage` - optional JPA persistence, manual PostgreSQL/Oracle DDL
+- `qubere-echo-agent` - primary reference host app on port `8080`
+- `qubere-document-agent` - second reference service on port `8081`, currently lightly tested
+- `agent-framework.md` - full design and standards document
 
-## Overview
+## Quickstart
 
-Qubere Agent Platform is a compact Maven framework for building reusable, governed agents. It keeps the public contract jar small, places most framework capabilities in `agent-core`, and keeps database/storage infrastructure in `agent-storage`.
+### Build and test
 
-`agent-app` is not the framework itself. It is a reference Spring Boot host with REST APIs and a sample generic agent. `qubere-document-agent` is the first real agent service, created to host document intake and document intelligence agents migrated from `app-frontend`. Real applications can depend on `agent-api`, `agent-core`, and optionally `agent-storage`, or they can use `agent-app` while developing examples.
-
-## Current Capabilities
-
-- Version-aware agent registry using `agentId + version`.
-- Startup descriptor validation and duplicate registration detection.
-- Configurable default agent versions and per-run version selection.
-- Runtime execution pipeline with authorization, guardrail, audit, governance, and execution-store hooks.
-- Spring AI adapter through `AgentAiClient` and `SpringAiAgentClient`.
-- Generic tool registry, tool execution, risk classification, audit events, and approval policy.
-- Memory abstraction with in-memory vector-style retrieval support.
-- Prompt template and prompt version management.
-- Async queue, pending command store, approval lifecycle, resume/reject flows, and optional HTTP callbacks.
-- Evaluation support for golden datasets, prompt regression checks, replay, observability summaries, and governance limits.
-- JPA persistence for execution records, execution logs, tool calls, model usage, approvals, pending commands, tool audits, prompt templates, and evaluation results.
-- Local H2 runtime by default, plus PostgreSQL and Oracle manual DDL scripts for external databases.
-- Secured opt-in admin endpoints for observability, evaluation, replay, and governance.
-
-## Enterprise standards alignment
-
-The framework design follows a composite production-agent standard rather than a single vendor-specific pattern:
-
-- NIST AI RMF / NIST AI 600-1 for AI risk governance, evaluation, monitoring, and lifecycle controls.
-- ISO/IEC 42001 for AI management-system discipline: ownership, documented controls, release gates, review, and continuous improvement.
-- OWASP Top 10 for LLM / GenAI Applications for prompt injection, excessive agency, sensitive-data leakage, supply-chain, vector, output-handling, and cost-exhaustion risks.
-- OpenTelemetry for vendor-neutral traces, metrics, logs, and context propagation.
-- MCP as a future adapter standard for governed external tools, resources, and context.
-- A2A as a future adapter standard for secure agent discovery and inter-agent task exchange.
-- CloudEvents as a future event format for lifecycle, approval, tool, governance, and evaluation events.
-- OpenAPI for REST API contract documentation and client generation.
-
-See `generic-agent-framework-spring-ai.md` sections `21` and `22` for the detailed standards mapping, checklists, release gates, and implementation-status matrix.
-
-## Modules
-
-- `agent-api` - stable public contracts for agents, inputs, outputs, descriptors, and execution context.
-- `agent-core` - runtime models, orchestration, registry, policy resolution, AI adapter, tools, memory, prompts, async approval, observability, security, evaluation, governance, and replay.
-- `agent-storage` - portable JPA storage for execution records, approvals, pending commands, tool audits, prompt templates, and evaluation results.
-- `agent-app` - optional runnable Spring Boot API shell and sample generic agent.
-- `qubere-document-agent` - runnable Spring Boot service for document intake and document intelligence agents migrated from `app-frontend`.
-
-## Build and test
-
-Run the full test suite:
-
-```bash
-mvn test
-```
-
-If Maven resolves `user.home` to `C:\` on Windows, use the workspace-local repository:
+Use the pinned JDK in this environment and run the full reactor offline:
 
 ```powershell
-mvn "-Duser.home=C:\WorkSpace\qubere-services\qubere-services\qubere-agents" "-Dmaven.repo.local=C:\WorkSpace\qubere-services\qubere-services\qubere-agents\.m2\repository" test
+$env:JAVA_HOME = 'C:\Softwares\Softwares\openlogic-openjdk-21.0.10+7-windows-x64\openlogic-openjdk-21.0.10+7-windows-x64'
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+mvn -o clean test
 ```
 
-Package with PostgreSQL runtime driver:
+### Run the reference apps
 
-```bash
-mvn -Ppostgres package
+```powershell
+# qubere-echo-agent
+mvn -o -pl qubere-echo-agent -am spring-boot:run
+
+# qubere-document-agent
+mvn -o -pl qubere-document-agent -am spring-boot:run
 ```
 
-Package with Oracle runtime driver:
+Then call:
 
-```bash
-mvn -Poracle package
+- `http://localhost:8080/actuator/health`
+- `http://localhost:8081/actuator/health`
+
+### Build container images
+
+Run from the repository root. The build context must stay at the root because the app modules depend on sibling reactor modules.
+
+```powershell
+docker build -f qubere-echo-agent/Dockerfile -t qubere-echo-agent:local .
+docker build -f qubere-document-agent/Dockerfile -t qubere-document-agent:local .
+docker compose up --build
 ```
 
-## Database switching
+## Current capabilities
 
-The reference app starts with local H2 by default. PostgreSQL and Oracle are explicit Maven/runtime profiles.
+- Stable `Agent<I,O>` contract and version-aware registry
+- Policy resolution with per-agent and per-run controls
+- Fail-closed caller identity seam with optional JWT resolver
+- Default and composable guardrails
+- Governed tool execution with durable `agent_tool_call` audit trail
+- `agent.call` for governed agent-as-tool delegation
+- `AgentOrchestrator` for sequential, parallel, routing, and supervisor workflows
+- Workflow linkage, aggregate workflow budgets, and remote cross-service invocation
+- Per-tenant, per-actor, and per-agent rate limiting
+- Per-run and per-workflow cost-budget enforcement
+- Resilience4j-backed optional circuit breaking and bulkheads
+- Spring AI integration with structured output and streaming text support
+- Durable vector-store-backed memory through any Spring AI `VectorStore`
+- Checkpoint-based resumability across approval pauses
+- Async execution with memory or database queues
+- Prompt versioning and seed prompts
+- Golden-dataset evaluation, replay, and red-team safety testing
+- MCP tool bridge for governed external tool access
+- Multi-stage Docker images and GitHub Actions CI/CD
 
-Local H2 runtime, no external DB required:
+## Configuration reference
 
-```bash
-mvn -pl agent-app spring-boot:run
-
-# Document-agent service
-mvn -pl qubere-document-agent spring-boot:run
-```
-
-Equivalent explicit runtime setting:
-
-```bash
-AGENT_DB=local
-```
-PostgreSQL runtime:
-
-```bash
-AGENT_DB=postgres
-AGENT_DATASOURCE_URL=jdbc:postgresql://localhost:5432/agents
-AGENT_DATASOURCE_USERNAME=agents
-AGENT_DATASOURCE_PASSWORD=agents
-```
-
-Oracle runtime:
-
-```bash
-AGENT_DB=oracle
-AGENT_DATASOURCE_URL=jdbc:oracle:thin:@localhost:1521/FREEPDB1
-AGENT_DATASOURCE_USERNAME=agents
-AGENT_DATASOURCE_PASSWORD=agents
-```
-
-Manual DDL scripts are under:
-
-- `agent-storage/src/main/resources/db/manual/postgres/001_agent_execution_record.sql`
-- `agent-storage/src/main/resources/db/manual/oracle/001_agent_execution_record.sql`
-
-See `docs/database/manual-ddl.md`.
-
-## Runtime behavior controls
-
-Framework defaults can be controlled through `application.yml` / `application.properties`:
+The block below reflects the full `agent-platform.*` surface supported by `AgentPlatformProperties.java`. Comments call out places where the reference apps intentionally override framework defaults in their own `application.yml`.
 
 ```yaml
-spring:
-  ai:
-    model:
-      chat: none # opt in to a real provider, e.g. openai, when credentials are configured
-
 agent-platform:
-  ai:
-    default-provider: openai
-    default-model: gpt-4.1-mini
-    spring:
-      enabled: false
-  registry:
-    strict-descriptor-validation: true
-    default-versions:
-      generic.echo-analysis: 0.1.0
   runtime:
     default-mode: recommend
+    dry-run: false
+    async: false
+    streaming: false
     max-steps: 8
     temperature: 0.2
     max-output-tokens: 2048
     allow-tool-calls: true
     require-human-approval: false
+    include-evidence: true
+    include-recommendations: true
+    timeout-seconds: 120
+    max-retries: 2
+    log-prompts: false
+    log-tool-results: false
+    response-detail: SUMMARY
+    priority: NORMAL
     allowed-tools: []
+    executor:
+      core-pool-size: 8
+      max-pool-size: 32
+      queue-capacity: 200
+      thread-name-prefix: agent-invoke-
+      await-termination-seconds: 30
+
+  registry:
+    strict-descriptor-validation: true
+    default-versions: {}
+
+  ai:
+    default-provider: openai
+    default-model: default # reference apps override this to gpt-4.1-mini
+    max-estimated-cost-usd: 0
+    tariffs: # example keyed by model name
+      "[gpt-4.1-mini]":
+        input-cost-usd-per-thousand-tokens: 0.00015
+        output-cost-usd-per-thousand-tokens: 0.0006
+
+  memory:
+    enabled: true
+    provider: in-memory
+    max-results: 5
+
+  tools:
+    enabled: true
+    audit-enabled: true
+    approval-required-for-destructive: true
+    max-tool-calls: 20
+
+  prompts:
+    provider: in-memory # reference apps set this to database
+    seed-enabled: true
+    seeds: # example seed entry
+      - prompt-id: example.agent.default
+        agent-id: example.agent
+        version: 0.1.0
+        status: DRAFT
+        system-template: You are the example agent.
+        user-template: Process the supplied input.
+        metadata: {}
+        overwrite: false
+
   async:
     enabled: true
-    worker-enabled: false # enable in deployed apps that should process queued runs in-process
+    worker-enabled: false
     poll-interval-millis: 1000
     max-runs-per-poll: 1
     approval-expiration-minutes: 60
     queue:
-      type: memory # memory for local dev; database uses agent-storage/JPA; kafka/rabbitmq/sqs are adapter extension points
+      type: memory
+      max-healthy-depth: 0
     callback:
       enabled: false
       max-attempts: 3
       retry-backoff-millis: 500
       timeout-seconds: 5
       signing-secret: ""
+
+  governance:
+    enabled: true
+    max-runs-per-tenant-per-minute: 0
+    max-runs-per-actor-per-minute: 0
+    max-estimated-cost-usd-per-run: 0
+    estimated-cost-usd-per-thousand-tokens: 0
+    require-approval-for-high-risk: true
+
   security:
-    authorization-mode: permissive # permissive for local dev; strict requires tenant/actor and configured permissions
+    authorization-mode: permissive
     require-tenant: true
     require-actor: true
     allowed-tenants: []
     required-run-permissions: []
+    agent-required-permissions: {}
+    trust-inbound-headers: null # derived from authorization-mode when omitted
+    jwt:
+      enabled: false
+      tenant-claim: tenant_id
+      actor-claim: sub
+      permissions-claim: scope
+
   observability:
     open-telemetry:
-      enabled: false # foundation listener/exporter only; real OTLP exporter is a future adapter
+      enabled: false
       service-name: qubere-agents
       include-tenant: true
       include-actor: false
       max-buffered-events: 1000
-  governance:
-    enabled: true
-    max-runs-per-tenant-per-minute: 0 # 0 disables this limiter
-    max-runs-per-actor-per-minute: 0 # 0 disables this limiter
-    max-estimated-cost-usd-per-run: 0 # 0 disables this limiter
-    estimated-cost-usd-per-thousand-tokens: 0
+      otlp:
+        enabled: false
+        endpoint: http://localhost:4317
+        protocol: grpc
+        timeout-seconds: 10
+
   admin:
-    enabled: false # disabled by default; enable only behind trusted/admin boundaries
-    token: "" # required when admin.enabled=true
-  definitions:
-    "[generic.echo-analysis]": # bracket notation preserves dots in map keys
+    enabled: false
+    token: ""
+
+  evaluation:
+    dataset-locations:
+      - classpath*:agent-evaluation/*.json
+    fail-on-invalid-dataset: true
+    dataset-provider: classpath # classpath | database | database-then-classpath
+
+  guardrails:
+    enabled: true
+    max-input-size-bytes: 200000
+    denylist-patterns:
+      - "(?i)ignore (all|any|the)?\\s*previous instructions"
+      - "(?i)disregard (all|any|the)?\\s*(system|prior) prompt"
+      - "(?i)reveal (your|the) system prompt"
+      - "(?i)you are now (in )?dan mode"
+      - "(?i)act as if (you have|there are) no restrictions"
+
+  resilience:
+    enabled: false
+    failure-rate-threshold: 50.0
+    sliding-window-size: 10
+    wait-duration-in-open-state-seconds: 30
+    permitted-number-of-calls-in-half-open-state: 3
+    bulkhead-max-concurrent-calls: 10
+    bulkhead-max-wait-duration-millis: 0
+
+  orchestration:
+    agent-call-tool-enabled: false
+    max-agent-invocations-per-workflow: 25
+    max-tool-calls-per-workflow: 100
+    max-estimated-cost-usd-per-workflow: 0
+    max-delegation-depth: 8
+    remote:
+      enabled: false
+      base-url: ""
+      timeout-seconds: 60
+
+  mcp:
+    enabled: false
+    exposed-tools: []
+
+  definitions: # example per-agent entry
+    "[example.agent]":
       enabled: true
       model-provider: openai
       model-name: gpt-4.1-mini
-      prompt-version: 0.1.0
+      prompt-version: latest
       memory-enabled: true
       max-memory-results: 3
       max-tool-calls: 4
       timeout-seconds: 30
+      max-retries: 1
+      max-estimated-cost-usd: 0
+      require-human-approval: false
+      allowed-tools: []
+      max-runs-per-minute: 0
 ```
 
-For strict authorization from environment variables, use Spring Boot relaxed binding names such as `AGENT_PLATFORM_SECURITY_AUTHORIZATION_MODE=strict`, `AGENT_PLATFORM_SECURITY_REQUIRED_RUN_PERMISSIONS=agents.run`, and `AGENT_PLATFORM_SECURITY_ALLOWED_TENANTS=tenant-a,tenant-b`.
+Reference-app specifics worth knowing:
 
-Callers can override these per run through `AgentRunOptions`. Null option values mean "use configured default".
+- `qubere-echo-agent` seeds `generic.echo-analysis`, `generic.tool-echo-analysis`, and `generic.ai-analysis`
+- `qubere-document-agent` seeds `document.intake` and `document.intelligence`
+- both apps default `spring.profiles.active` to `AGENT_DB=local`
+- both apps expose Actuator health/info/metrics
 
-## First API in reference app
+## Multi-agent orchestration usage
 
-For complete end-to-end testing scenarios, including Oracle profile setup, synchronous runs, async approval, governance, admin observability, replay, and database verification, see:
+### LLM-driven delegation through `agent.call`
+
+Use the governed tool path when the model chooses the sub-agent:
+
+```java
+ToolResult result = toolExecutionService.execute(new ToolExecutionRequest(
+        AgentCallTool.TOOL_NAME,
+        context,
+        policy,
+        Map.of(
+                AgentCallTool.ARG_AGENT_ID, "invoice.review",
+                AgentCallTool.ARG_INPUT, Map.of("invoiceId", "inv-1")
+        )));
+```
+
+This path inherits:
+
+- tool allow-list enforcement
+- approval policy
+- dry-run safety
+- `agent_tool_call` recording
+- workflow linkage
+- delegation-cycle protection
+
+### Code-declared orchestration through `AgentOrchestrator`
+
+```java
+OrchestrationState state = OrchestrationState.withInput(Map.of("invoiceId", "inv-1"));
+
+OrchestrationOutcome sequential = orchestrator.sequential(
+        rootContext,
+        state,
+        FailurePolicy.FAIL_FAST,
+        List.of(
+                OrchestrationStep.of("extract", "invoice.extract"),
+                OrchestrationStep.of("review", "invoice.review",
+                        s -> Map.of("extracted", s.result("extract").orElse(Map.of())))));
+
+OrchestrationOutcome fanOut = orchestrator.parallel(
+        rootContext,
+        state,
+        FailurePolicy.CONTINUE,
+        List.of(
+                OrchestrationStep.of("credit", "credit.check"),
+                OrchestrationStep.of("fraud", "fraud.check"),
+                OrchestrationStep.of("sanctions", "sanctions.check")));
+```
+
+Important behavior:
+
+- `parallel` uses a dedicated orchestration executor
+- cycles are checked against the full ancestor path, not only the immediate caller
+- `ToolApprovalRequiredException` propagates as control flow
+- workflow budgets cap total delegation across the whole tree
+
+## Durable memory (RAG) usage
+
+Add any Spring AI vector-store starter, for example pgvector:
+
+```xml
+<dependency>
+  <groupId>org.springframework.ai</groupId>
+  <artifactId>spring-ai-starter-vector-store-pgvector</artifactId>
+</dependency>
+```
+
+Once a `VectorStore` bean exists, `SpringAiVectorMemoryStore` is auto-configured. It stamps stored documents with `tenantId` and `namespace` metadata and filters every search on both. Missing tenant context is rejected rather than falling back to a global search.
+
+## Resumable/checkpointed agents usage
+
+Use `AgentCheckpointScope` inside multi-step agents that may pause for approval:
+
+```java
+AgentCheckpointScope checkpoints = AgentCheckpointScope.from(context);
+
+String reservation = checkpoints.step("reserve-stock", String.class,
+        () -> inventory.reserve(input));
+
+ToolResult shipped = checkpoints.step("ship-order", ToolResult.class,
+        () -> toolExecutionService.execute(shipRequest));
+```
+
+Design rules that matter:
+
+- this is step memoization, not stack capture
+- step names must be stable and deterministic
+- results must be JSON-serializable
+- completed side effects are not repeated after resume
+
+## Security
+
+### Strict vs permissive mode
+
+- `authorization-mode: permissive` is the local-development default
+- `authorization-mode: strict` is the real deployment default in spirit
+- strict mode uses `NoOpCallerIdentityResolver` unless the app supplies a trusted resolver, so it fails closed
+
+### Permissive header trust
+
+`TrustedHeaderCallerIdentityResolver` trusts `X-Tenant-Id`, `X-Actor-Id`, and `X-Agent-Permissions` only for permissive/local scenarios. Do not use it in production.
+
+### OAuth2/JWT setup
+
+Add the optional dependency:
+
+```xml
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+</dependency>
+```
+
+Enable the resolver:
+
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://your-idp.example.com/
+
+agent-platform:
+  security:
+    jwt:
+      enabled: true
+      tenant-claim: tenant_id
+      actor-claim: sub
+      permissions-claim: scope
+```
+
+`JwtCallerIdentityResolver` only activates when both `jwt.enabled=true` and a `JwtDecoder` bean are present. Invalid tokens resolve to unresolved identity; the fail-closed authorization check then rejects the request.
+
+## Container images and CI/CD
+
+Both runnable apps ship multi-stage Dockerfiles:
+
+- build from source with `maven:3.9.9-eclipse-temurin-21`
+- run on `eclipse-temurin:21-jre-jammy`
+- non-root user
+- `HEALTHCHECK` on `/actuator/health`
+
+GitHub Actions:
+
+- `.github/workflows/ci.yml` - full build/test gate on JDK 21, JDK 24 early warning, Docker build validation
+- `.github/workflows/docker-publish.yml` - reuses `ci.yml`, pushes to GHCR only after tests pass, runs informational Trivy scan
+
+## End-to-end scenarios
+
+For full run, async approval, admin, replay, and database scenarios, see:
 
 ```text
-agent-app/TESTING.md
+qubere-echo-agent/TESTING.md
 ```
 
-```http
-GET /api/agents
-POST /api/agents/{agentId}/runs
-POST /api/agents/async/process-next
-POST /api/agents/approvals/{approvalId}/approve
-POST /api/agents/approvals/{approvalId}/reject
-POST /api/agents/approvals/{approvalId}/decision
-GET /api/agents/runs/{executionId}
-```
+## Enterprise standards alignment
 
-Example run request with an explicit version:
-
-```json
-{
-  "agentVersion": "0.1.0",
-  "input": {
-    "message": "hello"
-  },
-  "options": {
-    "mode": "RECOMMEND",
-    "maxSteps": 4
-  }
-}
-```
-
-Example async request:
-
-```json
-{
-  "agentVersion": "0.1.0",
-  "async": true,
-  "callbackUrl": "https://example.com/agent-callback",
-  "input": {
-    "message": "hello"
-  },
-  "options": {
-    "requireHumanApproval": true
-  }
-}
-```
-
-If approval is required, the run returns `WAITING_FOR_APPROVAL` with an `approvalId`. Approve it with:
-
-```http
-POST /api/agents/approvals/{approvalId}/approve
-```
+The framework is aligned with NIST AI RMF, ISO/IEC 42001, OWASP LLM guidance, OpenTelemetry-style observability, and release-governance controls. See `agent-framework.md` for the full architecture, control mapping, and deferred-scope rationale.

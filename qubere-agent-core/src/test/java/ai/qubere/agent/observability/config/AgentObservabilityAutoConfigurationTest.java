@@ -5,6 +5,7 @@ import ai.qubere.agent.api.AgentExecutionContext;
 import ai.qubere.agent.api.AgentRiskLevel;
 import ai.qubere.agent.observability.AgentTelemetryExporter;
 import ai.qubere.agent.observability.InMemoryAgentTelemetryExporter;
+import ai.qubere.agent.observability.OtlpAgentTelemetryExporter;
 import ai.qubere.agent.runtime.AgentPipelineEvent;
 import ai.qubere.agent.runtime.AgentPipelineListener;
 import ai.qubere.agent.runtime.AgentPipelineStep;
@@ -98,6 +99,29 @@ class AgentObservabilityAutoConfigurationTest {
                     InMemoryAgentTelemetryExporter exporter = (InMemoryAgentTelemetryExporter) context.getBean(AgentTelemetryExporter.class);
                     assertThat(exporter.recentEvents(1).get(0).actorId()).isNull();
                     assertThat(exporter.recentEvents(1).get(0).attributes()).doesNotContainKey("agent.actor.id");
+                });
+    }
+
+    @Test
+    void registersRealOtlpExporterWhenExplicitlyEnabled() {
+        contextRunner
+                .withPropertyValues(
+                        "agent-platform.observability.open-telemetry.enabled=true",
+                        "agent-platform.observability.open-telemetry.otlp.enabled=true"
+                )
+                .run(context -> {
+                    assertThat(context).hasSingleBean(AgentTelemetryExporter.class);
+                    assertThat(context.getBean(AgentTelemetryExporter.class)).isInstanceOf(OtlpAgentTelemetryExporter.class);
+                });
+    }
+
+    @Test
+    void doesNotRegisterOtlpExporterWhenOtlpFlagIsDisabled() {
+        contextRunner
+                .withPropertyValues("agent-platform.observability.open-telemetry.enabled=true")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(AgentTelemetryExporter.class);
+                    assertThat(context.getBean(AgentTelemetryExporter.class)).isInstanceOf(InMemoryAgentTelemetryExporter.class);
                 });
     }
 

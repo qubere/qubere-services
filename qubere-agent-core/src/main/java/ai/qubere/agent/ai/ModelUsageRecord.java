@@ -2,6 +2,8 @@ package ai.qubere.agent.ai;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public record ModelUsageRecord(
@@ -28,6 +30,8 @@ public record ModelUsageRecord(
 ) {
     public ModelUsageRecord {
         status = status == null ? ModelUsageStatus.STARTED : status;
-        metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
+        // Metadata legitimately contains null values (e.g. unresolved temperature/maxOutputTokens),
+        // so an unmodifiable copy is used here instead of Map.copyOf/Map.of, which reject null values.
+        metadata = metadata == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(metadata));
     }
 }

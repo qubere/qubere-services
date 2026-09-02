@@ -1,12 +1,12 @@
-# Agent App End-to-End Testing Guide
+# Qubere Echo Agent End-to-End Testing Guide
 
-`agent-app` is the runnable reference host for validating the generic agent framework. It is intentionally small: one sample agent, REST endpoints, configuration-driven runtime behavior, async approval, durable persistence, governance, evaluation, replay, and secured admin operations.
+`qubere-echo-agent` is the runnable reference host for validating the generic agent framework. It is intentionally small: sample agents, REST endpoints, configuration-driven runtime behavior, async approval, durable persistence, governance, evaluation, replay, and secured admin operations.
 
 This guide describes the scenarios that should be tested before building the next phase.
 
 Important security rule: never commit real database passwords, admin tokens, provider API keys, or customer data into this repository. Use environment variables or your local shell profile.
 
-## 1. What `agent-app` validates
+## 1. What `qubere-echo-agent` validates
 
 | Area | Scenario | Expected result |
 | --- | --- | --- |
@@ -43,14 +43,14 @@ Package without tests:
 mvn -DskipTests package
 ```
 
-## 3. Start `agent-app` locally with H2
+## 3. Start `qubere-echo-agent` locally with H2
 
 The default runtime profile is `local`, backed by H2. No PostgreSQL or Oracle setup is required for a quick local smoke test.
 
 From the project root:
 
 ```powershell
-mvn -pl agent-app spring-boot:run
+mvn -pl qubere-echo-agent spring-boot:run
 ```
 
 Equivalent explicit environment variable:
@@ -59,7 +59,7 @@ Equivalent explicit environment variable:
 $env:AGENT_DB = "local"
 ```
 
-In STS, use the `agent-app` Spring Boot run configuration and either leave `AGENT_DB` unset or set it to `local`.
+In STS, use the `qubere-echo-agent` Spring Boot run configuration and either leave `AGENT_DB` unset or set it to `local`.
 
 Health check:
 
@@ -75,7 +75,7 @@ Expected:
 
 ## 4. Oracle setup
 
-The Oracle profile is already configured in `agent-app/src/main/resources/application-oracle.yml`.
+The Oracle profile is already configured in `qubere-echo-agent/src/main/resources/application-oracle.yml`.
 
 Use environment variables. Do not edit `application-oracle.yml` with real credentials.
 
@@ -106,7 +106,7 @@ Use `AGENT_JPA_DDL_AUTO=none` after manually running the DDL scripts. Hibernate 
 Before starting the app with Oracle, execute:
 
 ```text
-agent-storage/src/main/resources/db/manual/oracle/001_agent_execution_record.sql
+qubere-agent-storage/src/main/resources/db/manual/oracle/001_agent_execution_record.sql
 ```
 
 The script creates:
@@ -124,12 +124,12 @@ The script creates:
 
 If the tables already exist, do not rerun the script as-is because Oracle does not support `create table if not exists`.
 
-## 6. Start `agent-app` with Oracle
+## 6. Start `qubere-echo-agent` with Oracle
 
 From the project root:
 
 ```bash
-mvn -pl agent-app spring-boot:run -Poracle
+mvn -pl qubere-echo-agent spring-boot:run -Poracle
 ```
 
 The app starts on:
@@ -441,7 +441,7 @@ $env:SPRING_AI_OPENAI_API_KEY = "<local-api-key>"
 $env:AGENT_AI_PROVIDER = "openai"
 $env:AGENT_AI_MODEL = "gpt-4.1-mini"
 
-mvn -pl agent-app spring-boot:run -Pai-openai,oracle
+mvn -pl qubere-echo-agent spring-boot:run -Pai-openai,oracle
 ```
 
 Request:

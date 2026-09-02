@@ -1,5 +1,6 @@
 package ai.qubere.agent.runtime;
 
+import ai.qubere.agent.api.AgentRiskLevel;
 import ai.qubere.agent.core.AgentRunMode;
 import ai.qubere.agent.core.AgentRunOptions;
 import ai.qubere.agent.core.ResolvedAgentPolicy;
@@ -63,5 +64,65 @@ class DefaultAgentPolicyResolverTest {
         assertThat(policy.streaming()).isTrue();
         assertThat(policy.temperature()).isEqualTo(0.2d);
         assertThat(policy.allowedTools()).containsExactly("caller.tool");
+    }
+
+    @Test
+    void highRiskAgentDefaultsToRequiringApprovalWhenNotExplicitlyConfigured() {
+        AgentPlatformProperties properties = new AgentPlatformProperties();
+        properties.getRuntime().setRequireHumanApproval(false);
+        // No per-agent definition at all: only the descriptor risk level drives the decision.
+
+        ResolvedAgentPolicy policy = new DefaultAgentPolicyResolver(properties)
+                .resolve("agent.high-risk", null, AgentRiskLevel.HIGH);
+
+        assertThat(policy.requireHumanApproval()).isTrue();
+    }
+
+    @Test
+    void criticalRiskAgentDefaultsToRequiringApproval() {
+        AgentPlatformProperties properties = new AgentPlatformProperties();
+        properties.getRuntime().setRequireHumanApproval(false);
+
+        ResolvedAgentPolicy policy = new DefaultAgentPolicyResolver(properties)
+                .resolve("agent.critical-risk", null, AgentRiskLevel.CRITICAL);
+
+        assertThat(policy.requireHumanApproval()).isTrue();
+    }
+
+    @Test
+    void lowRiskAgentDoesNotDefaultToRequiringApproval() {
+        AgentPlatformProperties properties = new AgentPlatformProperties();
+        properties.getRuntime().setRequireHumanApproval(false);
+
+        ResolvedAgentPolicy policy = new DefaultAgentPolicyResolver(properties)
+                .resolve("agent.low-risk", null, AgentRiskLevel.LOW);
+
+        assertThat(policy.requireHumanApproval()).isFalse();
+    }
+
+    @Test
+    void explicitPerAgentConfigurationOverridesRiskBasedApprovalDefault() {
+        AgentPlatformProperties properties = new AgentPlatformProperties();
+        properties.getRuntime().setRequireHumanApproval(false);
+        AgentPlatformProperties.AgentDefinition definition = new AgentPlatformProperties.AgentDefinition();
+        definition.setRequireHumanApproval(false);
+        properties.getDefinitions().put("agent.high-risk-but-explicitly-unattended", definition);
+
+        ResolvedAgentPolicy policy = new DefaultAgentPolicyResolver(properties)
+                .resolve("agent.high-risk-but-explicitly-unattended", null, AgentRiskLevel.HIGH);
+
+        assertThat(policy.requireHumanApproval()).isFalse();
+    }
+
+    @Test
+    void riskBasedApprovalDefaultCanBeDisabledGlobally() {
+        AgentPlatformProperties properties = new AgentPlatformProperties();
+        properties.getRuntime().setRequireHumanApproval(false);
+        properties.getGovernance().setRequireApprovalForHighRisk(false);
+
+        ResolvedAgentPolicy policy = new DefaultAgentPolicyResolver(properties)
+                .resolve("agent.high-risk", null, AgentRiskLevel.HIGH);
+
+        assertThat(policy.requireHumanApproval()).isFalse();
     }
 }

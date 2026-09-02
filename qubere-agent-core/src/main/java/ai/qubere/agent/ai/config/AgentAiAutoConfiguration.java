@@ -1,5 +1,6 @@
 package ai.qubere.agent.ai.config;
 
+import ai.qubere.agent.ai.ModelCostBudgetTracker;
 import ai.qubere.agent.ai.ModelUsageRecorder;
 
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -13,5 +14,11 @@ public class AgentAiAutoConfiguration {
     @ConditionalOnMissingBean
     ModelUsageRecorder modelUsageRecorder() {
         return ModelUsageRecorder.noop();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    ModelCostBudgetTracker modelCostBudgetTracker() {
+        return new ModelCostBudgetTracker();
     }
 }

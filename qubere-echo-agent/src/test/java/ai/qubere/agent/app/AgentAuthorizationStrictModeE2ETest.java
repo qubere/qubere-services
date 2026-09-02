@@ -11,11 +11,18 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * Strict authorization mode must fail closed by default: inbound X-Tenant-Id/X-Actor-Id/
+ * X-Agent-Permissions headers must never be trusted unless the deployed application explicitly
+ * opts in with {@code agent-platform.security.trust-inbound-headers=true}, or supplies a real
+ * {@code AgentCallerIdentityResolver} bean backed by a verified identity source. This is the
+ * fail-closed behavior fixed as part of production-readiness Tier 0.
+ */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 "spring.profiles.active=test",
-                "spring.datasource.url=jdbc:h2:mem:agentauthweb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false",
+                "spring.datasource.url=jdbc:h2:mem:agentauthwebstrict;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false",
                 "spring.datasource.driver-class-name=org.h2.Driver",
                 "spring.datasource.username=sa",
                 "spring.datasource.password=",
@@ -27,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "agent-platform.security.required-run-permissions[0]=agents.run"
         }
 )
-class AgentAuthorizationE2ETest {
+class AgentAuthorizationStrictModeE2ETest {
 
     @LocalServerPort
     private int port;
@@ -35,7 +42,7 @@ class AgentAuthorizationE2ETest {
     private final HttpClient client = HttpClient.newHttpClient();
 
     @Test
-    void strictAuthorizationRejectsMissingTenantActorAndAllowsHeaderPermissions() throws Exception {
+    void strictAuthorizationRejectsMissingTenantActorAndIgnoresSpoofedHeaders() throws Exception {
         String body = """
                 {"agentVersion":"0.1.0","input":{"message":"auth test"}}
                 """;
@@ -45,14 +52,16 @@ class AgentAuthorizationE2ETest {
         assertThat(rejected.statusCode()).isEqualTo(403);
         assertThat(rejected.body()).contains("\"code\":\"AUTHORIZATION_DENIED\"");
 
-        HttpResponse<String> allowed = client.send(baseRequest(body)
+        // Even with headers set, strict mode must not trust them by default: the caller identity
+        // resolver ignores inbound headers unless explicitly configured otherwise.
+        HttpResponse<String> stillRejected = client.send(baseRequest(body)
                 .header("X-Tenant-Id", "tenant-test-1")
                 .header("X-Actor-Id", "actor-test-1")
                 .header("X-Agent-Permissions", "agents.run")
                 .build(), HttpResponse.BodyHandlers.ofString());
 
-        assertThat(allowed.statusCode()).isEqualTo(200);
-        assertThat(allowed.body()).contains("\"status\":\"SUCCEEDED\"");
+        assertThat(stillRejected.statusCode()).isEqualTo(403);
+        assertThat(stillRejected.body()).contains("\"code\":\"AUTHORIZATION_DENIED\"");
     }
 
     private HttpRequest.Builder baseRequest(String body) {

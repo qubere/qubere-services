@@ -19,10 +19,10 @@
     <description>Generic Java 21 Spring Boot and Spring AI framework for building agentic AI systems.</description>
 
     <modules>
-        <module>agent-api</module>
-        <module>agent-core</module>
-        <module>agent-storage</module>
-        <module>agent-app</module>
+        <module>qubere-agent-api</module>
+        <module>qubere-agent-core</module>
+        <module>qubere-agent-storage</module>
+        <module>qubere-echo-agent</module>
         <module>qubere-document-agent</module>
     </modules>
 
@@ -35,6 +35,13 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-bom</artifactId>
+                <version>1.43.0</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>

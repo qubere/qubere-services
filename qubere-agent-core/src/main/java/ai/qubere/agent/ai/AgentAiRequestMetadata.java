@@ -3,6 +3,7 @@ package ai.qubere.agent.ai;
 import ai.qubere.agent.api.AgentExecutionContext;
 import ai.qubere.agent.core.ResolvedAgentPolicy;
 
+import java.math.BigDecimal;
 import java.util.Map;
 
 public record AgentAiRequestMetadata(
@@ -20,6 +21,7 @@ public record AgentAiRequestMetadata(
         Integer maxOutputTokens,
         Boolean logPrompts,
         Boolean logToolResults,
+        BigDecimal maxEstimatedCostUsd,
         Map<String, Object> metadata
 ) {
     public AgentAiRequestMetadata {
@@ -27,7 +29,7 @@ public record AgentAiRequestMetadata(
     }
 
     public static AgentAiRequestMetadata empty() {
-        return new AgentAiRequestMetadata(null, null, null, null, null, null, null, null, null, null, null, null, null, null, Map.of());
+        return new AgentAiRequestMetadata(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, Map.of());
     }
 
     public static AgentAiRequestMetadata from(AgentExecutionContext context) {
@@ -52,6 +54,7 @@ public record AgentAiRequestMetadata(
                 policy == null ? null : policy.maxOutputTokens(),
                 policy == null ? null : policy.logPrompts(),
                 policy == null ? null : policy.logToolResults(),
+                policy == null ? null : policy.maxEstimatedCostUsd(),
                 Map.of()
         );
     }

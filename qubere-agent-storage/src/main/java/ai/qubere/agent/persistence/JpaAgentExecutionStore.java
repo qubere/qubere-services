@@ -7,12 +7,15 @@ import ai.qubere.agent.api.AgentOutput;
 import ai.qubere.agent.core.AgentRunStatus;
 import ai.qubere.agent.runtime.AgentExecutionRecord;
 import ai.qubere.agent.runtime.AgentExecutionStore;
+import ai.qubere.agent.runtime.AgentWorkflowContext;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -87,6 +90,14 @@ public class JpaAgentExecutionStore implements AgentExecutionStore {
         entity.setStatus(status);
         entity.setInputJson(toJson(input));
         entity.setErrorMessage(errorMessage);
+        // Workflow linkage is set once on first write. A resumed/re-queued execution keeps the
+        // workflow it was originally part of rather than being re-parented by a later context.
+        if (entity.getWorkflowId() == null) {
+            entity.setWorkflowId(AgentWorkflowContext.workflowId(context));
+        }
+        if (entity.getParentExecutionId() == null) {
+            entity.setParentExecutionId(AgentWorkflowContext.parentExecutionId(context));
+        }
         entity.setUpdatedAt(now);
         repository.save(entity);
     }
@@ -129,6 +140,19 @@ public class JpaAgentExecutionStore implements AgentExecutionStore {
                 .map(this::toRecord);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<AgentExecutionRecord> findByWorkflowId(String workflowId, int limit) {
+        if (workflowId == null || workflowId.isBlank()) {
+            return List.of();
+        }
+        int boundedLimit = Math.max(1, Math.min(limit, 500));
+        return repository.findByWorkflowIdOrderByCreatedAtAsc(workflowId.trim(), PageRequest.of(0, boundedLimit))
+                .stream()
+                .map(this::toRecord)
+                .toList();
+    }
+
     private AgentExecutionRecord toRecord(AgentExecutionRecordEntity entity) {
         return new AgentExecutionRecord(
                 entity.getExecutionId(),
@@ -142,7 +166,9 @@ public class JpaAgentExecutionStore implements AgentExecutionStore {
                 entity.getErrorMessage(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt(),
-                entity.getIdempotencyKey()
+                entity.getIdempotencyKey(),
+                entity.getWorkflowId(),
+                entity.getParentExecutionId()
         );
     }
 

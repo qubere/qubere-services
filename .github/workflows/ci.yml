@@ -1,0 +1,84 @@
+name: CI
+
+# Core quality gate for the reactor: every push and pull request must build and pass the full
+# test suite before anything is considered mergeable or eligible for an image build.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+  # Lets docker-publish.yml call this workflow directly, so an image is only ever built from a
+  # commit that has just cleared this same test suite -- not from a separately re-run copy of it.
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test (JDK ${{ matrix.java }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 21 is the framework's verified baseline (pom.xml java.version=21) and must pass.
+        java: [21, 24]
+      fail-fast: false
+    # JDK 24 is exercised as an early-warning signal for the next LTS/interim upgrade, but only
+    # JDK 21 gates merges: the framework has not been verified against 24 closely enough to trust
+    # it as a hard requirement yet.
+    continue-on-error: ${{ matrix.java != 21 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      - name: Build and run full reactor test suite
+        run: mvn -B -ntp clean verify
+
+      - name: Publish test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-jdk${{ matrix.java }}
+          path: '**/target/surefire-reports/*.txt'
+          retention-days: 14
+          if-no-files-found: ignore
+
+  validate-docker-build:
+    name: Validate Docker image builds
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    strategy:
+      matrix:
+        include:
+          - module: qubere-echo-agent
+            image: qubere-echo-agent
+          - module: qubere-document-agent
+            image: qubere-document-agent
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.image }} image (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.module }}/Dockerfile
+          push: false
+          tags: ${{ matrix.image }}:ci-validate
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
