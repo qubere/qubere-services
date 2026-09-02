@@ -24,6 +24,7 @@ public class InMemoryAgentGovernanceService implements AgentGovernanceService {
     private final Clock clock;
     private final Map<String, ArrayDeque<Instant>> tenantRuns = new ConcurrentHashMap<>();
     private final Map<String, ArrayDeque<Instant>> actorRuns = new ConcurrentHashMap<>();
+    private final Map<String, ArrayDeque<Instant>> agentRuns = new ConcurrentHashMap<>();
 
     public InMemoryAgentGovernanceService(AgentPlatformProperties properties) {
         this(properties, Clock.systemUTC());
@@ -42,7 +43,16 @@ public class InMemoryAgentGovernanceService implements AgentGovernanceService {
         }
         enforceRateLimit("tenant", context.tenantId(), governance.getMaxRunsPerTenantPerMinute(), tenantRuns);
         enforceRateLimit("actor", context.actorId(), governance.getMaxRunsPerActorPerMinute(), actorRuns);
+        enforceRateLimit("agent", descriptor.id(), resolveAgentRateLimit(descriptor.id()), agentRuns);
         enforceCostLimit(descriptor, policy, governance);
+    }
+
+    private int resolveAgentRateLimit(String agentId) {
+        AgentPlatformProperties.AgentDefinition definition = properties.getDefinitions().get(agentId);
+        if (definition == null || definition.getMaxRunsPerMinute() == null) {
+            return 0;
+        }
+        return definition.getMaxRunsPerMinute();
     }
 
     @Override

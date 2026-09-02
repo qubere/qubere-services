@@ -1,5 +1,6 @@
 package ai.qubere.agent.runtime;
 
+import ai.qubere.agent.api.AgentRiskLevel;
 import ai.qubere.agent.core.AgentRunOptions;
 import ai.qubere.agent.core.ResolvedAgentPolicy;
 import ai.qubere.agent.runtime.config.AgentPlatformProperties;
@@ -21,6 +22,11 @@ public class DefaultAgentPolicyResolver implements AgentPolicyResolver {
 
     @Override
     public ResolvedAgentPolicy resolve(String agentId, AgentRunOptions requestedOptions) {
+        return resolve(agentId, requestedOptions, null);
+    }
+
+    @Override
+    public ResolvedAgentPolicy resolve(String agentId, AgentRunOptions requestedOptions, AgentRiskLevel descriptorRiskLevel) {
         AgentPlatformProperties.Runtime defaults = properties.getRuntime();
         AgentPlatformProperties.AgentDefinition agentDefinition = properties.getDefinitions()
                 .getOrDefault(agentId, new AgentPlatformProperties.AgentDefinition());
@@ -50,7 +56,7 @@ public class DefaultAgentPolicyResolver implements AgentPolicyResolver {
                 options.maxOutputTokens() == null ? defaults.getMaxOutputTokens() : options.maxOutputTokens(),
                 options.allowToolCalls() == null ? defaults.isAllowToolCalls() : options.allowToolCalls(),
                 options.requireHumanApproval() == null
-                        ? resolveApproval(defaults, agentDefinition)
+                        ? resolveApproval(defaults, agentDefinition, descriptorRiskLevel)
                         : options.requireHumanApproval(),
                 defaults.isLogPrompts(),
                 defaults.isLogToolResults(),
@@ -72,10 +78,34 @@ public class DefaultAgentPolicyResolver implements AgentPolicyResolver {
         );
     }
 
-    private boolean resolveApproval(AgentPlatformProperties.Runtime defaults, AgentPlatformProperties.AgentDefinition agentDefinition) {
-        return agentDefinition.getRequireHumanApproval() == null
-                ? defaults.isRequireHumanApproval()
-                : agentDefinition.getRequireHumanApproval();
+    /**
+     * Resolves whether human approval is required. Precedence:
+     * <ol>
+     *   <li>Explicit per-agent {@code require-human-approval} configuration always wins.</li>
+     *   <li>Otherwise, if {@code agent-platform.governance.require-approval-for-high-risk} is
+     *       enabled (default) and the agent's declared risk level is {@code HIGH} or
+     *       {@code CRITICAL}, approval defaults to required. This is fail-closed: a descriptor
+     *       declaring elevated risk cannot silently run unattended just because nobody wrote
+     *       agent-specific configuration for it.</li>
+     *   <li>Otherwise, the platform-wide runtime default applies.</li>
+     * </ol>
+     */
+    private boolean resolveApproval(
+            AgentPlatformProperties.Runtime defaults,
+            AgentPlatformProperties.AgentDefinition agentDefinition,
+            AgentRiskLevel descriptorRiskLevel
+    ) {
+        if (agentDefinition.getRequireHumanApproval() != null) {
+            return agentDefinition.getRequireHumanApproval();
+        }
+        if (properties.getGovernance().isRequireApprovalForHighRisk() && isElevatedRisk(descriptorRiskLevel)) {
+            return true;
+        }
+        return defaults.isRequireHumanApproval();
+    }
+
+    private boolean isElevatedRisk(AgentRiskLevel riskLevel) {
+        return riskLevel == AgentRiskLevel.HIGH || riskLevel == AgentRiskLevel.CRITICAL;
     }
 
     private Set<String> resolveAllowedTools(Set<String> platformTools, Set<String> agentTools, Set<String> callerTools) {

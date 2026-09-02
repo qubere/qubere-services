@@ -1,6 +1,7 @@
 package ai.qubere.agent.tools.config;
 
 import ai.qubere.agent.redaction.AgentRedactionService;
+import ai.qubere.agent.resilience.AgentResilienceGateway;
 import ai.qubere.agent.tools.AgentTool;
 import ai.qubere.agent.tools.ToolApprovalPolicy;
 import ai.qubere.agent.tools.ToolAuditService;
@@ -50,7 +51,8 @@ public class AgentToolsAutoConfiguration {
             ToolAuditService auditService,
             ToolCallRecorder toolCallRecorder,
             AgentRedactionService redactionService,
-            ObjectProvider<ai.qubere.agent.tools.ToolApprovalRequestSink> approvalRequestSink
+            ObjectProvider<ai.qubere.agent.tools.ToolApprovalRequestSink> approvalRequestSink,
+            ObjectProvider<AgentResilienceGateway> resilienceGateway
     ) {
         return new ToolExecutionService(
                 registry,
@@ -58,7 +60,8 @@ public class AgentToolsAutoConfiguration {
                 auditService,
                 approvalRequestSink.getIfAvailable(),
                 toolCallRecorder,
-                redactionService
+                redactionService,
+                resilienceGateway.getIfAvailable(AgentResilienceGateway::noop)
         );
     }
 }

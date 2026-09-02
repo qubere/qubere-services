@@ -4,7 +4,10 @@ import ai.qubere.agent.core.AgentErrorCode;
 import ai.qubere.agent.core.AgentExecutionException;
 import ai.qubere.agent.redaction.AgentRedactionService;
 import ai.qubere.agent.redaction.DefaultAgentRedactionService;
+import ai.qubere.agent.resilience.AgentResilienceGateway;
 import ai.qubere.agent.runtime.AgentRunBudget;
+import ai.qubere.agent.runtime.AgentWorkflowBudget;
+import ai.qubere.agent.runtime.AgentWorkflowContext;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -21,6 +24,7 @@ public class ToolExecutionService {
     private final ToolApprovalRequestSink approvalRequestSink;
     private final ToolCallRecorder toolCallRecorder;
     private final AgentRedactionService redactionService;
+    private final AgentResilienceGateway resilienceGateway;
 
     public ToolExecutionService(Collection<AgentTool> tools) {
         this(new ToolRegistry(tools), ToolApprovalPolicy.defaultPolicy(), ToolAuditService.noop(), ToolApprovalRequestSink.noop(), ToolCallRecorder.noop());
@@ -52,12 +56,25 @@ public class ToolExecutionService {
             ToolCallRecorder toolCallRecorder,
             AgentRedactionService redactionService
     ) {
+        this(registry, approvalPolicy, auditService, approvalRequestSink, toolCallRecorder, redactionService, AgentResilienceGateway.noop());
+    }
+
+    public ToolExecutionService(
+            ToolRegistry registry,
+            ToolApprovalPolicy approvalPolicy,
+            ToolAuditService auditService,
+            ToolApprovalRequestSink approvalRequestSink,
+            ToolCallRecorder toolCallRecorder,
+            AgentRedactionService redactionService,
+            AgentResilienceGateway resilienceGateway
+    ) {
         this.registry = registry;
         this.approvalPolicy = approvalPolicy == null ? ToolApprovalPolicy.defaultPolicy() : approvalPolicy;
         this.auditService = auditService == null ? ToolAuditService.noop() : auditService;
         this.approvalRequestSink = approvalRequestSink == null ? ToolApprovalRequestSink.noop() : approvalRequestSink;
         this.toolCallRecorder = toolCallRecorder == null ? ToolCallRecorder.noop() : toolCallRecorder;
         this.redactionService = redactionService == null ? new DefaultAgentRedactionService() : redactionService;
+        this.resilienceGateway = resilienceGateway == null ? AgentResilienceGateway.noop() : resilienceGateway;
     }
 
     public ToolResult execute(ToolExecutionRequest request) {
@@ -89,12 +106,14 @@ public class ToolExecutionService {
 
             recordCall(request, descriptor, callId, ToolCallStatus.STARTED, null, null, approvedApprovalId, startedAt, null);
             record(request, ToolAuditStatus.STARTED, approvalAlreadyGranted ? "Approved tool execution started" : "Tool execution started", approvedApprovalId == null ? Map.of() : Map.of("approvalId", approvedApprovalId));
-            ToolResult result = tool.execute(new ToolInput(
+            recordInvokedToolForRedTeam(request, descriptor);
+            ToolResult result = resilienceGateway.execute("tool:" + descriptor.name(), () -> tool.execute(new ToolInput(
                     request.context().executionId(),
                     request.context().tenantId(),
                     request.context().actorId(),
-                    request.arguments()
-            ));
+                    request.arguments(),
+                    request.context()
+            )));
             ToolCallStatus status = result.success() ? ToolCallStatus.SUCCEEDED : ToolCallStatus.FAILED;
             recordCall(request, descriptor, callId, status, summarizeResult(request, result.values()), result.errorMessage(), approvedApprovalId, startedAt, Instant.now());
             record(request, result.success() ? ToolAuditStatus.SUCCEEDED : ToolAuditStatus.FAILED, result.errorMessage(), approvedApprovalId == null ? Map.of() : Map.of("approvalId", approvedApprovalId));
@@ -130,6 +149,17 @@ public class ToolExecutionService {
     }
 
     private void consumeRunBudget(ToolDescriptor descriptor, ToolExecutionRequest request, String callId, Instant startedAt) {
+        // Workflow-wide ceiling is checked first so an orchestration that has already exhausted
+        // its aggregate tool budget is rejected regardless of the individual agent's remaining
+        // per-run allowance.
+        AgentWorkflowBudget workflowBudget = AgentWorkflowContext.workflowBudget(request.context());
+        if (workflowBudget != null) {
+            try {
+                workflowBudget.consumeToolCall(descriptor.name());
+            } catch (AgentExecutionException ex) {
+                reject(request, descriptor, callId, startedAt, ex.getMessage());
+            }
+        }
         Object budget = request.context().attributes().get("agentRunBudget");
         if (!(budget instanceof AgentRunBudget agentRunBudget)) {
             return;
@@ -138,6 +168,19 @@ public class ToolExecutionService {
             agentRunBudget.consumeToolCall(descriptor.name());
         } catch (AgentExecutionException ex) {
             reject(request, descriptor, callId, startedAt, ex.getMessage());
+        }
+    }
+
+    /**
+     * Records the tool name into the red-team scratch set when a red-team run is in progress, so
+     * an adversarial case can assert the agent never reached for a forbidden tool even if its
+     * final output looks harmless. No-op outside red-team runs.
+     */
+    @SuppressWarnings("unchecked")
+    private void recordInvokedToolForRedTeam(ToolExecutionRequest request, ToolDescriptor descriptor) {
+        Object invoked = request.context().attributes().get("redTeamInvokedTools");
+        if (invoked instanceof java.util.Set<?> set) {
+            ((java.util.Set<String>) set).add(descriptor.name());
         }
     }
 

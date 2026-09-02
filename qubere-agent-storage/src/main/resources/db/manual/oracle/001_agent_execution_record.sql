@@ -1,5 +1,5 @@
 -- Qubere Agent Platform Phase 1 manual DDL for Oracle.
--- Execute manually before running agent-app with spring.jpa.hibernate.ddl-auto=validate.
+-- Execute manually before running qubere-echo-agent with spring.jpa.hibernate.ddl-auto=validate.
 -- Oracle does not support create table if not exists; run once per schema.
 
 create table agent_execution_record (
@@ -9,6 +9,8 @@ create table agent_execution_record (
     tenant_id varchar2(128 char),
     actor_id varchar2(128 char),
     idempotency_key varchar2(128 char),
+    workflow_id varchar2(64 char),
+    parent_execution_id varchar2(64 char),
     status varchar2(32 char) not null,
     input_json clob,
     output_json clob,
@@ -17,6 +19,9 @@ create table agent_execution_record (
     updated_at timestamp with time zone not null,
     constraint pk_agent_execution_record primary key (execution_id)
 );
+
+create index idx_agent_execution_record_workflow
+    on agent_execution_record (workflow_id, created_at);
 
 create index idx_agent_execution_record_agent
     on agent_execution_record (agent_id, agent_version);
@@ -236,3 +241,34 @@ create index idx_agent_evaluation_result_status
 
 
 
+
+create table agent_checkpoint (
+    execution_id varchar2(64 char) not null,
+    step_name varchar2(200 char) not null,
+    step_index number(10) not null,
+    result_json clob,
+    completed_at timestamp with time zone not null,
+    constraint pk_agent_checkpoint primary key (execution_id, step_name)
+);
+
+create index idx_agent_checkpoint_execution
+    on agent_checkpoint (execution_id, step_index);
+
+create table agent_workflow_budget (
+    workflow_id varchar2(64 char) not null,
+    used_agent_invocations number(10) default 0 not null,
+    used_tool_calls number(10) default 0 not null,
+    used_cost_usd number(19, 6) default 0 not null,
+    updated_at timestamp with time zone not null,
+    version number(19) default 0 not null,
+    constraint pk_agent_workflow_budget primary key (workflow_id)
+);
+
+create table agent_evaluation_dataset (
+    dataset_name varchar2(200 char) not null,
+    description varchar2(1000 char),
+    examples_json clob,
+    metadata_json clob,
+    updated_at timestamp with time zone not null,
+    constraint pk_agent_evaluation_dataset primary key (dataset_name)
+);

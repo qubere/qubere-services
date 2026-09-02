@@ -1,5 +1,5 @@
 -- Qubere Agent Platform Phase 1 manual DDL for PostgreSQL.
--- Execute manually before running agent-app with spring.jpa.hibernate.ddl-auto=validate.
+-- Execute manually before running qubere-echo-agent with spring.jpa.hibernate.ddl-auto=validate.
 
 create table if not exists agent_execution_record (
     execution_id varchar(64) primary key,
@@ -8,6 +8,8 @@ create table if not exists agent_execution_record (
     tenant_id varchar(128),
     actor_id varchar(128),
     idempotency_key varchar(128),
+    workflow_id varchar(64),
+    parent_execution_id varchar(64),
     status varchar(32) not null,
     input_json text,
     output_json text,
@@ -15,6 +17,9 @@ create table if not exists agent_execution_record (
     created_at timestamp with time zone not null,
     updated_at timestamp with time zone not null
 );
+
+create index if not exists idx_agent_execution_record_workflow
+    on agent_execution_record (workflow_id, created_at);
 
 create index if not exists idx_agent_execution_record_agent
     on agent_execution_record (agent_id, agent_version);
@@ -227,3 +232,32 @@ create index if not exists idx_agent_evaluation_result_status
 
 
 
+
+create table if not exists agent_checkpoint (
+    execution_id varchar(64) not null,
+    step_name varchar(200) not null,
+    step_index integer not null,
+    result_json text,
+    completed_at timestamp with time zone not null,
+    constraint pk_agent_checkpoint primary key (execution_id, step_name)
+);
+
+create index if not exists idx_agent_checkpoint_execution
+    on agent_checkpoint (execution_id, step_index);
+
+create table if not exists agent_workflow_budget (
+    workflow_id varchar(64) primary key,
+    used_agent_invocations integer not null default 0,
+    used_tool_calls integer not null default 0,
+    used_cost_usd numeric(19, 6) not null default 0,
+    updated_at timestamp with time zone not null,
+    version bigint not null default 0
+);
+
+create table if not exists agent_evaluation_dataset (
+    dataset_name varchar(200) primary key,
+    description varchar(1000),
+    examples_json text,
+    metadata_json text,
+    updated_at timestamp with time zone not null
+);

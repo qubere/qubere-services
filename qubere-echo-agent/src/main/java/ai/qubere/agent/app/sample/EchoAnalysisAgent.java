@@ -37,22 +37,22 @@ public class EchoAnalysisAgent implements Agent<GenericAgentInput, AgentResult<M
         ResolvedAgentPolicy policy = context.attributes().get("resolvedPolicy") instanceof ResolvedAgentPolicy resolved
                 ? resolved
                 : ResolvedAgentPolicy.defaults();
+        Map<String, Object> resultValues = new java.util.LinkedHashMap<>();
+        resultValues.put("executionId", context.executionId());
+        resultValues.put("tenantId", context.tenantId());
+        resultValues.put("received", input.values());
+        resultValues.put("policy", Map.of(
+                "mode", policy.mode().name(),
+                "modelProvider", policy.modelProvider(),
+                "modelName", policy.modelName(),
+                "promptVersion", policy.promptVersion(),
+                "memoryEnabled", policy.memoryEnabled(),
+                "maxToolCalls", policy.maxToolCalls(),
+                "timeoutSeconds", policy.timeoutSeconds(),
+                "allowedTools", policy.allowedTools()
+        ));
         return new AgentResult<>(
-                Map.of(
-                        "executionId", context.executionId(),
-                        "tenantId", context.tenantId(),
-                        "received", input.values(),
-                        "policy", Map.of(
-                                "mode", policy.mode().name(),
-                                "modelProvider", policy.modelProvider(),
-                                "modelName", policy.modelName(),
-                                "promptVersion", policy.promptVersion(),
-                                "memoryEnabled", policy.memoryEnabled(),
-                                "maxToolCalls", policy.maxToolCalls(),
-                                "timeoutSeconds", policy.timeoutSeconds(),
-                                "allowedTools", policy.allowedTools()
-                        )
-                ),
+                resultValues,
                 new AgentDecisionDraft("ECHO_ACCEPTED", "Input accepted by the generic runtime.", 1.0d),
                 List.of(),
                 Map.of("agentId", DESCRIPTOR.id())

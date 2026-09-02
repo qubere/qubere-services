@@ -27,7 +27,43 @@ public class AgentPlatformProperties {
     private Observability observability = new Observability();
     private Admin admin = new Admin();
     private Evaluation evaluation = new Evaluation();
+    private Guardrails guardrails = new Guardrails();
+    private Resilience resilience = new Resilience();
+    private Orchestration orchestration = new Orchestration();
+    private Mcp mcp = new Mcp();
     private Map<String, AgentDefinition> definitions = new LinkedHashMap<>();
+
+    public Mcp getMcp() {
+        return mcp;
+    }
+
+    public void setMcp(Mcp mcp) {
+        this.mcp = mcp == null ? new Mcp() : mcp;
+    }
+
+    public Orchestration getOrchestration() {
+        return orchestration;
+    }
+
+    public void setOrchestration(Orchestration orchestration) {
+        this.orchestration = orchestration == null ? new Orchestration() : orchestration;
+    }
+
+    public Resilience getResilience() {
+        return resilience;
+    }
+
+    public void setResilience(Resilience resilience) {
+        this.resilience = resilience == null ? new Resilience() : resilience;
+    }
+
+    public Guardrails getGuardrails() {
+        return guardrails;
+    }
+
+    public void setGuardrails(Guardrails guardrails) {
+        this.guardrails = guardrails == null ? new Guardrails() : guardrails;
+    }
 
     public Runtime getRuntime() {
         return runtime;
@@ -152,6 +188,15 @@ public class AgentPlatformProperties {
         private String responseDetail = "SUMMARY";
         private String priority = "NORMAL";
         private Set<String> allowedTools = new LinkedHashSet<>();
+        private RuntimeExecutor executor = new RuntimeExecutor();
+
+        public RuntimeExecutor getExecutor() {
+            return executor;
+        }
+
+        public void setExecutor(RuntimeExecutor executor) {
+            this.executor = executor == null ? new RuntimeExecutor() : executor;
+        }
 
         public AgentRunMode getDefaultMode() {
             return defaultMode;
@@ -298,6 +343,312 @@ public class AgentPlatformProperties {
         }
     }
 
+    public static class RuntimeExecutor {
+        private int corePoolSize = 8;
+        private int maxPoolSize = 32;
+        private int queueCapacity = 200;
+        private String threadNamePrefix = "agent-invoke-";
+        private int awaitTerminationSeconds = 30;
+
+        public int getCorePoolSize() {
+            return corePoolSize;
+        }
+
+        public void setCorePoolSize(int corePoolSize) {
+            this.corePoolSize = corePoolSize;
+        }
+
+        public int getMaxPoolSize() {
+            return maxPoolSize;
+        }
+
+        public void setMaxPoolSize(int maxPoolSize) {
+            this.maxPoolSize = maxPoolSize;
+        }
+
+        public int getQueueCapacity() {
+            return queueCapacity;
+        }
+
+        public void setQueueCapacity(int queueCapacity) {
+            this.queueCapacity = queueCapacity;
+        }
+
+        public String getThreadNamePrefix() {
+            return threadNamePrefix;
+        }
+
+        public void setThreadNamePrefix(String threadNamePrefix) {
+            this.threadNamePrefix = threadNamePrefix == null || threadNamePrefix.isBlank() ? "agent-invoke-" : threadNamePrefix;
+        }
+
+        public int getAwaitTerminationSeconds() {
+            return awaitTerminationSeconds;
+        }
+
+        public void setAwaitTerminationSeconds(int awaitTerminationSeconds) {
+            this.awaitTerminationSeconds = awaitTerminationSeconds;
+        }
+    }
+
+    public static class Guardrails {
+        private boolean enabled = true;
+        private int maxInputSizeBytes = 200_000;
+        private Set<String> denylistPatterns = new LinkedHashSet<>(List.of(
+                "(?i)ignore (all|any|the)?\\s*previous instructions",
+                "(?i)disregard (all|any|the)?\\s*(system|prior) prompt",
+                "(?i)reveal (your|the) system prompt",
+                "(?i)you are now (in )?dan mode",
+                "(?i)act as if (you have|there are) no restrictions"
+        ));
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getMaxInputSizeBytes() {
+            return maxInputSizeBytes;
+        }
+
+        public void setMaxInputSizeBytes(int maxInputSizeBytes) {
+            this.maxInputSizeBytes = maxInputSizeBytes;
+        }
+
+        public Set<String> getDenylistPatterns() {
+            return denylistPatterns;
+        }
+
+        public void setDenylistPatterns(Set<String> denylistPatterns) {
+            this.denylistPatterns = denylistPatterns == null ? new LinkedHashSet<>() : new LinkedHashSet<>(denylistPatterns);
+        }
+    }
+
+    /**
+     * Model Context Protocol exposure settings. The framework provides the governed bridge; the
+     * MCP transport itself is owned by the deployed application.
+     */
+    public static class Mcp {
+        /**
+         * Whether to register the MCP tool bridge. Disabled by default: exposing internal tools
+         * to external MCP clients is a deliberate decision, not something adding the framework
+         * should enable implicitly.
+         */
+        private boolean enabled = false;
+        /**
+         * Tools exposed over MCP. An empty set exposes every registered tool, which is convenient
+         * in development but should be narrowed in production so adding an internal tool does not
+         * silently publish it to external clients.
+         */
+        private Set<String> exposedTools = new LinkedHashSet<>();
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public Set<String> getExposedTools() {
+            return exposedTools;
+        }
+
+        public void setExposedTools(Set<String> exposedTools) {
+            this.exposedTools = exposedTools == null ? new LinkedHashSet<>() : new LinkedHashSet<>(exposedTools);
+        }
+    }
+
+    /**
+     * Multi-agent orchestration settings.
+     */
+    public static class Orchestration {
+        /**
+         * Whether to register the {@code agent.call} tool that lets an orchestrator agent (or an
+         * LLM driving it) invoke other registered agents as sub-agents. Disabled by default
+         * because registering it makes every agent in the application reachable as a tool;
+         * deployments that enable it should still restrict delegation targets through the normal
+         * tool allow-list.
+         */
+        private boolean agentCallToolEnabled = false;
+        /** Aggregate cap on agent invocations per workflow. {@code 0} disables the limit. */
+        private int maxAgentInvocationsPerWorkflow = 25;
+        /** Aggregate cap on tool calls per workflow. {@code 0} disables the limit. */
+        private int maxToolCallsPerWorkflow = 100;
+        /** Aggregate model-spend cap per workflow. {@code 0} disables the limit. */
+        private BigDecimal maxEstimatedCostUsdPerWorkflow = BigDecimal.ZERO;
+        /**
+         * Maximum delegation hops below the workflow root for {@code agent.call}. {@code 0}
+         * disables the depth guard; cycle detection always applies regardless of this setting.
+         */
+        private int maxDelegationDepth = 8;
+        private Remote remote = new Remote();
+
+        public int getMaxDelegationDepth() {
+            return maxDelegationDepth;
+        }
+
+        public void setMaxDelegationDepth(int maxDelegationDepth) {
+            this.maxDelegationDepth = Math.max(0, maxDelegationDepth);
+        }
+
+        public boolean isAgentCallToolEnabled() {
+            return agentCallToolEnabled;
+        }
+
+        public void setAgentCallToolEnabled(boolean agentCallToolEnabled) {
+            this.agentCallToolEnabled = agentCallToolEnabled;
+        }
+
+        public int getMaxAgentInvocationsPerWorkflow() {
+            return maxAgentInvocationsPerWorkflow;
+        }
+
+        public void setMaxAgentInvocationsPerWorkflow(int maxAgentInvocationsPerWorkflow) {
+            this.maxAgentInvocationsPerWorkflow = Math.max(0, maxAgentInvocationsPerWorkflow);
+        }
+
+        public int getMaxToolCallsPerWorkflow() {
+            return maxToolCallsPerWorkflow;
+        }
+
+        public void setMaxToolCallsPerWorkflow(int maxToolCallsPerWorkflow) {
+            this.maxToolCallsPerWorkflow = Math.max(0, maxToolCallsPerWorkflow);
+        }
+
+        public BigDecimal getMaxEstimatedCostUsdPerWorkflow() {
+            return maxEstimatedCostUsdPerWorkflow;
+        }
+
+        public void setMaxEstimatedCostUsdPerWorkflow(BigDecimal maxEstimatedCostUsdPerWorkflow) {
+            this.maxEstimatedCostUsdPerWorkflow = maxEstimatedCostUsdPerWorkflow == null ? BigDecimal.ZERO : maxEstimatedCostUsdPerWorkflow;
+        }
+
+        public Remote getRemote() {
+            return remote;
+        }
+
+        public void setRemote(Remote remote) {
+            this.remote = remote == null ? new Remote() : remote;
+        }
+
+        /**
+         * Cross-service agent invocation settings, used when an orchestrator delegates to an
+         * agent hosted by a different Spring Boot service.
+         */
+        public static class Remote {
+            /**
+             * Whether to auto-configure the HTTP {@code RemoteAgentClient}. Disabled by default
+             * because most deployments run agents in-process and should not gain an outbound
+             * HTTP dependency implicitly.
+             */
+            private boolean enabled = false;
+            /** Base URL of the remote agent service, e.g. {@code http://invoice-agent:8081}. */
+            private String baseUrl;
+            private int timeoutSeconds = 60;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getBaseUrl() {
+                return baseUrl;
+            }
+
+            public void setBaseUrl(String baseUrl) {
+                this.baseUrl = baseUrl;
+            }
+
+            public int getTimeoutSeconds() {
+                return timeoutSeconds;
+            }
+
+            public void setTimeoutSeconds(int timeoutSeconds) {
+                this.timeoutSeconds = Math.max(1, timeoutSeconds);
+            }
+        }
+    }
+
+    /**
+     * Circuit breaker / bulkhead settings applied per distinct call key (per model name, per
+     * tool name) when {@code enabled=true} and Resilience4j is present on the classpath.
+     * Disabled by default: resilience defaults are workload-specific and should be tuned before
+     * enabling in production, and enabling unconditionally would surprise applications that add
+     * the framework without opting into new failure-handling behavior.
+     */
+    public static class Resilience {
+        private boolean enabled = false;
+        private float failureRateThreshold = 50.0f;
+        private int slidingWindowSize = 10;
+        private int waitDurationInOpenStateSeconds = 30;
+        private int permittedNumberOfCallsInHalfOpenState = 3;
+        private int bulkheadMaxConcurrentCalls = 10;
+        private long bulkheadMaxWaitDurationMillis = 0L;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public float getFailureRateThreshold() {
+            return failureRateThreshold;
+        }
+
+        public void setFailureRateThreshold(float failureRateThreshold) {
+            this.failureRateThreshold = failureRateThreshold;
+        }
+
+        public int getSlidingWindowSize() {
+            return slidingWindowSize;
+        }
+
+        public void setSlidingWindowSize(int slidingWindowSize) {
+            this.slidingWindowSize = Math.max(1, slidingWindowSize);
+        }
+
+        public int getWaitDurationInOpenStateSeconds() {
+            return waitDurationInOpenStateSeconds;
+        }
+
+        public void setWaitDurationInOpenStateSeconds(int waitDurationInOpenStateSeconds) {
+            this.waitDurationInOpenStateSeconds = Math.max(1, waitDurationInOpenStateSeconds);
+        }
+
+        public int getPermittedNumberOfCallsInHalfOpenState() {
+            return permittedNumberOfCallsInHalfOpenState;
+        }
+
+        public void setPermittedNumberOfCallsInHalfOpenState(int permittedNumberOfCallsInHalfOpenState) {
+            this.permittedNumberOfCallsInHalfOpenState = Math.max(1, permittedNumberOfCallsInHalfOpenState);
+        }
+
+        public int getBulkheadMaxConcurrentCalls() {
+            return bulkheadMaxConcurrentCalls;
+        }
+
+        public void setBulkheadMaxConcurrentCalls(int bulkheadMaxConcurrentCalls) {
+            this.bulkheadMaxConcurrentCalls = Math.max(1, bulkheadMaxConcurrentCalls);
+        }
+
+        public long getBulkheadMaxWaitDurationMillis() {
+            return bulkheadMaxWaitDurationMillis;
+        }
+
+        public void setBulkheadMaxWaitDurationMillis(long bulkheadMaxWaitDurationMillis) {
+            this.bulkheadMaxWaitDurationMillis = Math.max(0L, bulkheadMaxWaitDurationMillis);
+        }
+    }
+
     public static class Registry {
         private boolean strictDescriptorValidation = true;
         private Map<String, String> defaultVersions = new LinkedHashMap<>();
@@ -323,6 +674,7 @@ public class AgentPlatformProperties {
         private String defaultProvider = "openai";
         private String defaultModel = "default";
         private BigDecimal maxEstimatedCostUsd = BigDecimal.ZERO;
+        private Map<String, ModelTariff> tariffs = new LinkedHashMap<>();
 
         public String getDefaultProvider() {
             return defaultProvider;
@@ -346,6 +698,41 @@ public class AgentPlatformProperties {
 
         public void setMaxEstimatedCostUsd(BigDecimal maxEstimatedCostUsd) {
             this.maxEstimatedCostUsd = maxEstimatedCostUsd == null ? BigDecimal.ZERO : maxEstimatedCostUsd;
+        }
+
+        public Map<String, ModelTariff> getTariffs() {
+            return tariffs;
+        }
+
+        public void setTariffs(Map<String, ModelTariff> tariffs) {
+            this.tariffs = tariffs == null ? new LinkedHashMap<>() : new LinkedHashMap<>(tariffs);
+        }
+    }
+
+    /**
+     * Per-model $/1000-token pricing used to compute real {@code estimatedCostUsd} for
+     * {@code agent_model_usage} rows and to enforce {@code ResolvedAgentPolicy.maxEstimatedCostUsd()}
+     * hard budgets. Configure under {@code agent-platform.ai.tariffs.<model-name>}. Models without a
+     * configured tariff produce a {@code null} cost, matching prior behavior.
+     */
+    public static class ModelTariff {
+        private BigDecimal inputCostUsdPerThousandTokens = BigDecimal.ZERO;
+        private BigDecimal outputCostUsdPerThousandTokens = BigDecimal.ZERO;
+
+        public BigDecimal getInputCostUsdPerThousandTokens() {
+            return inputCostUsdPerThousandTokens;
+        }
+
+        public void setInputCostUsdPerThousandTokens(BigDecimal inputCostUsdPerThousandTokens) {
+            this.inputCostUsdPerThousandTokens = inputCostUsdPerThousandTokens == null ? BigDecimal.ZERO : inputCostUsdPerThousandTokens;
+        }
+
+        public BigDecimal getOutputCostUsdPerThousandTokens() {
+            return outputCostUsdPerThousandTokens;
+        }
+
+        public void setOutputCostUsdPerThousandTokens(BigDecimal outputCostUsdPerThousandTokens) {
+            this.outputCostUsdPerThousandTokens = outputCostUsdPerThousandTokens == null ? BigDecimal.ZERO : outputCostUsdPerThousandTokens;
         }
     }
 
@@ -590,6 +977,7 @@ public class AgentPlatformProperties {
 
         public static class Queue {
             private String type = "memory";
+            private int maxHealthyDepth;
 
             public String getType() {
                 return type;
@@ -597,6 +985,14 @@ public class AgentPlatformProperties {
 
             public void setType(String type) {
                 this.type = type == null || type.isBlank() ? "memory" : type.trim().toLowerCase();
+            }
+
+            public int getMaxHealthyDepth() {
+                return maxHealthyDepth;
+            }
+
+            public void setMaxHealthyDepth(int maxHealthyDepth) {
+                this.maxHealthyDepth = Math.max(0, maxHealthyDepth);
             }
         }
 
@@ -655,6 +1051,22 @@ public class AgentPlatformProperties {
         private int maxRunsPerActorPerMinute;
         private BigDecimal maxEstimatedCostUsdPerRun = BigDecimal.ZERO;
         private BigDecimal estimatedCostUsdPerThousandTokens = BigDecimal.ZERO;
+        /**
+         * When {@code true} (default, fail-closed), agents whose {@code AgentDescriptor.riskLevel()}
+         * is {@code HIGH} or {@code CRITICAL} default to requiring human approval even if
+         * {@code agent-platform.runtime.require-human-approval} is {@code false} and the agent's
+         * own definition does not explicitly set {@code require-human-approval}. Set an explicit
+         * {@code require-human-approval} on a specific agent definition to override this per agent.
+         */
+        private boolean requireApprovalForHighRisk = true;
+
+        public boolean isRequireApprovalForHighRisk() {
+            return requireApprovalForHighRisk;
+        }
+
+        public void setRequireApprovalForHighRisk(boolean requireApprovalForHighRisk) {
+            this.requireApprovalForHighRisk = requireApprovalForHighRisk;
+        }
 
         public boolean isEnabled() {
             return enabled;
@@ -715,6 +1127,15 @@ public class AgentPlatformProperties {
             private boolean includeTenant = true;
             private boolean includeActor;
             private int maxBufferedEvents = 1000;
+            private Otlp otlp = new Otlp();
+
+            public Otlp getOtlp() {
+                return otlp;
+            }
+
+            public void setOtlp(Otlp otlp) {
+                this.otlp = otlp == null ? new Otlp() : otlp;
+            }
 
             public boolean isEnabled() {
                 return enabled;
@@ -756,6 +1177,52 @@ public class AgentPlatformProperties {
                 this.maxBufferedEvents = Math.max(100, maxBufferedEvents);
             }
         }
+
+        /**
+         * Real OTLP span export, layered on top of the framework's OpenTelemetry-shaped event
+         * foundation. Requires {@code opentelemetry-sdk} and {@code opentelemetry-exporter-otlp}
+         * on the classpath (declared optional by the framework) and
+         * {@code agent-platform.observability.open-telemetry.enabled=true} plus
+         * {@code agent-platform.observability.open-telemetry.otlp.enabled=true}.
+         */
+        public static class Otlp {
+            private boolean enabled = false;
+            private String endpoint = "http://localhost:4317";
+            private String protocol = "grpc";
+            private int timeoutSeconds = 10;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getEndpoint() {
+                return endpoint;
+            }
+
+            public void setEndpoint(String endpoint) {
+                this.endpoint = endpoint == null || endpoint.isBlank() ? "http://localhost:4317" : endpoint;
+            }
+
+            public String getProtocol() {
+                return protocol;
+            }
+
+            public void setProtocol(String protocol) {
+                this.protocol = protocol == null || protocol.isBlank() ? "grpc" : protocol.trim().toLowerCase();
+            }
+
+            public int getTimeoutSeconds() {
+                return timeoutSeconds;
+            }
+
+            public void setTimeoutSeconds(int timeoutSeconds) {
+                this.timeoutSeconds = Math.max(1, timeoutSeconds);
+            }
+        }
     }
     public static class Security {
         private String authorizationMode = "permissive";
@@ -764,6 +1231,17 @@ public class AgentPlatformProperties {
         private Set<String> allowedTenants = new LinkedHashSet<>();
         private Set<String> requiredRunPermissions = new LinkedHashSet<>();
         private Map<String, Set<String>> agentRequiredPermissions = new LinkedHashMap<>();
+        /**
+         * Whether X-Tenant-Id / X-Actor-Id / X-Agent-Permissions inbound HTTP headers may be
+         * trusted directly as caller identity. Left {@code null} by default so the resolved
+         * value is derived from {@link #authorizationMode}: {@code true} for {@code permissive}
+         * (local development) and {@code false} for {@code strict} (production). Set explicitly
+         * to override the derived behavior. Production deployments should leave this {@code false}
+         * and supply a custom {@code AgentCallerIdentityResolver} bean backed by a verified
+         * identity provider (JWT/OAuth/Spring Security) instead of trusting raw headers.
+         */
+        private Boolean trustInboundHeaders;
+        private Jwt jwt = new Jwt();
 
         public String getAuthorizationMode() {
             return authorizationMode;
@@ -816,6 +1294,88 @@ public class AgentPlatformProperties {
                         this.agentRequiredPermissions.put(agentId, permissions == null ? new LinkedHashSet<>() : new LinkedHashSet<>(permissions)));
             }
         }
+
+        public Boolean getTrustInboundHeaders() {
+            return trustInboundHeaders;
+        }
+
+        public void setTrustInboundHeaders(Boolean trustInboundHeaders) {
+            this.trustInboundHeaders = trustInboundHeaders;
+        }
+
+        /**
+         * Resolves the effective trust decision: the explicit setting if present, otherwise
+         * {@code true} only for permissive mode. Strict mode defaults to {@code false} (fail-closed).
+         */
+        public boolean resolveTrustInboundHeaders() {
+            if (trustInboundHeaders != null) {
+                return trustInboundHeaders;
+            }
+            return !"strict".equalsIgnoreCase(authorizationMode);
+        }
+
+        public Jwt getJwt() {
+            return jwt;
+        }
+
+        public void setJwt(Jwt jwt) {
+            this.jwt = jwt == null ? new Jwt() : jwt;
+        }
+
+        /**
+         * OAuth2/JWT-backed caller identity settings. Opt-in and additive to the framework's
+         * existing identity seam: enabling this registers {@link ai.qubere.agent.runtime.security.JwtCallerIdentityResolver}
+         * as the {@code AgentCallerIdentityResolver}, provided a {@code JwtDecoder} bean is also
+         * present (typically via {@code spring-boot-starter-oauth2-resource-server} and
+         * {@code spring.security.oauth2.resourceserver.jwt.issuer-uri}).
+         */
+        public static class Jwt {
+            /**
+             * Whether inbound requests should be authenticated via a validated JWT bearer token.
+             * Disabled by default: this only activates when both this flag is {@code true} and a
+             * {@code JwtDecoder} bean exists, so simply adding the optional dependency does not
+             * silently change authentication behavior.
+             */
+            private boolean enabled = false;
+            /** Claim carrying the tenant id. Identity providers vary widely here. */
+            private String tenantClaim = "tenant_id";
+            /** Claim carrying the actor id; falls back to the standard {@code sub} claim. */
+            private String actorClaim = "sub";
+            /** Claim carrying permissions/scopes, either a delimited string or a JSON array. */
+            private String permissionsClaim = "scope";
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getTenantClaim() {
+                return tenantClaim;
+            }
+
+            public void setTenantClaim(String tenantClaim) {
+                this.tenantClaim = tenantClaim == null || tenantClaim.isBlank() ? "tenant_id" : tenantClaim;
+            }
+
+            public String getActorClaim() {
+                return actorClaim;
+            }
+
+            public void setActorClaim(String actorClaim) {
+                this.actorClaim = actorClaim == null || actorClaim.isBlank() ? "sub" : actorClaim;
+            }
+
+            public String getPermissionsClaim() {
+                return permissionsClaim;
+            }
+
+            public void setPermissionsClaim(String permissionsClaim) {
+                this.permissionsClaim = permissionsClaim == null || permissionsClaim.isBlank() ? "scope" : permissionsClaim;
+            }
+        }
     }
     public static class Admin {
         private boolean enabled;
@@ -841,6 +1401,27 @@ public class AgentPlatformProperties {
     public static class Evaluation {
         private Set<String> datasetLocations = new LinkedHashSet<>(Set.of("classpath*:agent-evaluation/*.json"));
         private boolean failOnInvalidDataset = true;
+        /**
+         * Where golden datasets are loaded from:
+         * <ul>
+         *   <li>{@code classpath} (default) — datasets ship and version with the application.</li>
+         *   <li>{@code database} — datasets are curated operationally in {@code agent_evaluation_dataset}.</li>
+         *   <li>{@code database-then-classpath} — database entries override same-named classpath
+         *       datasets, and classpath datasets remain available as a fallback.</li>
+         * </ul>
+         * Database modes require {@code qubere-agent-storage} on the classpath.
+         */
+        private String datasetProvider = "classpath";
+
+        public String getDatasetProvider() {
+            return datasetProvider;
+        }
+
+        public void setDatasetProvider(String datasetProvider) {
+            this.datasetProvider = datasetProvider == null || datasetProvider.isBlank()
+                    ? "classpath"
+                    : datasetProvider.trim().toLowerCase();
+        }
 
         public Set<String> getDatasetLocations() {
             return datasetLocations;
@@ -871,6 +1452,20 @@ public class AgentPlatformProperties {
         private BigDecimal maxEstimatedCostUsd;
         private Boolean requireHumanApproval;
         private Set<String> allowedTools = new LinkedHashSet<>();
+        /**
+         * Optional per-agent rate limit (runs per rolling minute, across all tenants/actors).
+         * {@code null} (default) means no per-agent limit is enforced; only the platform-wide
+         * tenant/actor governance limits apply.
+         */
+        private Integer maxRunsPerMinute;
+
+        public Integer getMaxRunsPerMinute() {
+            return maxRunsPerMinute;
+        }
+
+        public void setMaxRunsPerMinute(Integer maxRunsPerMinute) {
+            this.maxRunsPerMinute = maxRunsPerMinute;
+        }
 
         public boolean isEnabled() {
             return enabled;

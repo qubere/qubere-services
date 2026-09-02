@@ -139,6 +139,24 @@ class AgentEvaluationTest {
     }
 
     @Test
+    void enforcesPerAgentRateLimitAcrossDifferentActors() {
+        AgentPlatformProperties properties = new AgentPlatformProperties();
+        AgentPlatformProperties.AgentDefinition definition = new AgentPlatformProperties.AgentDefinition();
+        definition.setMaxRunsPerMinute(1);
+        properties.getDefinitions().put("echo", definition);
+        InMemoryAgentGovernanceService governance = new InMemoryAgentGovernanceService(properties);
+        AgentRuntimeService runtime = runtimeService(new InMemoryExecutionStore(), List.of(governance));
+
+        // Different actors, same agent: the per-agent limit must still trip because it is
+        // agent-scoped, not actor-scoped.
+        runtime.run("echo", "1.0.0", input("first"), contextForActor("exec-1", "actor-a"), null);
+
+        assertThatThrownBy(() -> runtime.run("echo", "1.0.0", input("second"), contextForActor("exec-2", "actor-b"), null))
+                .isInstanceOfSatisfying(AgentExecutionException.class, exception ->
+                        assertThat(exception.errorCode()).isEqualTo(AgentErrorCode.GOVERNANCE_LIMIT_EXCEEDED));
+    }
+
+    @Test
     void enforcesEstimatedCostLimit() {
         AgentPlatformProperties properties = new AgentPlatformProperties();
         properties.getGovernance().setMaxEstimatedCostUsdPerRun(new BigDecimal("0.01"));
@@ -187,6 +205,10 @@ class AgentEvaluationTest {
 
     private AgentExecutionContext context(String executionId) {
         return new AgentExecutionContext(executionId, "tenant-1", "actor-1", "corr-1", Instant.now(), Map.of());
+    }
+
+    private AgentExecutionContext contextForActor(String executionId, String actorId) {
+        return new AgentExecutionContext(executionId, "tenant-1", actorId, "corr-1", Instant.now(), Map.of());
     }
 
     private static final class EchoAgent implements Agent<GenericAgentInput, AgentResult<Map<String, Object>>> {

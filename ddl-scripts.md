@@ -2,7 +2,7 @@
 
 The platform intentionally does not auto-create or auto-migrate database objects in deployed environments.
 
-Run the matching script manually before starting `agent-app` with `spring.jpa.hibernate.ddl-auto=validate`.
+Run the matching script manually before starting `qubere-echo-agent` with `spring.jpa.hibernate.ddl-auto=validate`.
 
 The current manual DDL creates:
 
@@ -17,13 +17,13 @@ The current manual DDL creates:
 ## PostgreSQL
 
 ```bash
-psql "$AGENT_DATASOURCE_URL" -f agent-storage/src/main/resources/db/manual/postgres/001_agent_execution_record.sql
+psql "$AGENT_DATASOURCE_URL" -f qubere-agent-storage/src/main/resources/db/manual/postgres/001_agent_execution_record.sql
 ```
 
 ## Oracle
 
 ```bash
-sqlplus agents/password@//localhost:1521/FREEPDB1 @agent-storage/src/main/resources/db/manual/oracle/001_agent_execution_record.sql
+sqlplus agents/password@//localhost:1521/FREEPDB1 @qubere-agent-storage/src/main/resources/db/manual/oracle/001_agent_execution_record.sql
 ```
 
 ## Runtime setting

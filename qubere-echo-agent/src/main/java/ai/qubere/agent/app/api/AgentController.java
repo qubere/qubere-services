@@ -6,16 +6,19 @@ import ai.qubere.agent.api.AgentOutput;
 import ai.qubere.agent.async.AgentAsyncRunHandle;
 import ai.qubere.agent.async.AgentAsyncRuntimeService;
 import ai.qubere.agent.core.GenericAgentInput;
+import ai.qubere.agent.orchestration.AgentPropagationHeaders;
 import ai.qubere.agent.runtime.AgentExecutionRecord;
 import ai.qubere.agent.runtime.AgentExecutionStore;
 import ai.qubere.agent.runtime.AgentRegistry;
 import ai.qubere.agent.runtime.AgentRuntimeService;
+import ai.qubere.agent.runtime.AgentWorkflowContext;
+import ai.qubere.agent.runtime.security.AgentCallerIdentity;
+import ai.qubere.agent.runtime.security.AgentCallerIdentityResolver;
 
 import java.time.Instant;
 import java.util.Collection;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 import jakarta.validation.Valid;
@@ -36,17 +39,20 @@ public class AgentController {
     private final AgentRuntimeService runtimeService;
     private final AgentAsyncRuntimeService asyncRuntimeService;
     private final AgentExecutionStore executionStore;
+    private final AgentCallerIdentityResolver callerIdentityResolver;
 
     public AgentController(
             AgentRegistry registry,
             AgentRuntimeService runtimeService,
             AgentAsyncRuntimeService asyncRuntimeService,
-            AgentExecutionStore executionStore
+            AgentExecutionStore executionStore,
+            AgentCallerIdentityResolver callerIdentityResolver
     ) {
         this.registry = registry;
         this.runtimeService = runtimeService;
         this.asyncRuntimeService = asyncRuntimeService;
         this.executionStore = executionStore;
+        this.callerIdentityResolver = callerIdentityResolver;
     }
 
     @GetMapping
@@ -58,20 +64,25 @@ public class AgentController {
     public AgentRunResponse runAgent(
             @PathVariable String agentId,
             @Valid @RequestBody AgentRunRequest request,
-            @RequestHeader(name = "X-Tenant-Id", required = false) String tenantId,
-            @RequestHeader(name = "X-Actor-Id", required = false) String actorId,
+            @RequestHeader Map<String, String> headers,
             @RequestHeader(name = "X-Correlation-Id", required = false) String correlationId,
             @RequestHeader(name = "X-Idempotency-Key", required = false) String idempotencyKey,
-            @RequestHeader(name = "X-Agent-Permissions", required = false) String permissions
+            @RequestHeader(name = AgentPropagationHeaders.WORKFLOW_ID, required = false) String workflowId,
+            @RequestHeader(name = AgentPropagationHeaders.PARENT_EXECUTION_ID, required = false) String parentExecutionId
     ) {
+        // Tenant/actor/permission identity must come only from callerIdentityResolver, never
+        // read directly from request headers here. In strict authorization mode the default
+        // resolver ignores inbound headers entirely (fail-closed) unless the deployed application
+        // supplies a real resolver backed by a verified identity source (JWT/OAuth/gateway).
+        AgentCallerIdentity callerIdentity = callerIdentityResolver.resolve(headers);
         String executionId = UUID.randomUUID().toString();
         AgentExecutionContext context = new AgentExecutionContext(
                 executionId,
-                tenantId,
-                actorId,
+                callerIdentity.tenantId(),
+                callerIdentity.actorId(),
                 correlationId,
                 Instant.now(),
-                contextAttributes(permissions)
+                contextAttributes(callerIdentity, workflowId, parentExecutionId)
         );
         if (Boolean.TRUE.equals(request.async())) {
             AgentAsyncRunHandle handle = asyncRuntimeService.submit(
@@ -146,26 +157,21 @@ public class AgentController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    private Map<String, Object> contextAttributes(String permissionsHeader) {
-        Set<String> permissions = parseCsvHeader(permissionsHeader);
-        if (permissions.isEmpty()) {
-            return Map.of();
+    private Map<String, Object> contextAttributes(AgentCallerIdentity callerIdentity, String workflowId, String parentExecutionId) {
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        if (!callerIdentity.permissions().isEmpty()) {
+            attributes.put("permissions", callerIdentity.permissions());
         }
-        return Map.of("permissions", permissions);
-    }
-
-    private Set<String> parseCsvHeader(String header) {
-        if (header == null || header.isBlank()) {
-            return Set.of();
+        // Workflow linkage is metadata, not an authorization decision, so it is safe to accept
+        // from an upstream agent service: it only groups this execution into a workflow for
+        // observability and rollup. Tenant/actor still come solely from the identity resolver.
+        if (workflowId != null && !workflowId.isBlank()) {
+            attributes.put(AgentWorkflowContext.WORKFLOW_ID, workflowId.trim());
         }
-        Set<String> values = new LinkedHashSet<>();
-        for (String token : header.split(",")) {
-            String value = token.trim();
-            if (!value.isEmpty()) {
-                values.add(value);
-            }
+        if (parentExecutionId != null && !parentExecutionId.isBlank()) {
+            attributes.put(AgentWorkflowContext.PARENT_EXECUTION_ID, parentExecutionId.trim());
         }
-        return values;
+        return attributes;
     }
 
     private String firstNonBlank(String first, String second) {

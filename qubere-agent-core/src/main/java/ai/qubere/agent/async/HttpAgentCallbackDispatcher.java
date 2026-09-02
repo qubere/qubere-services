@@ -1,6 +1,7 @@
 package ai.qubere.agent.async;
 
 import ai.qubere.agent.runtime.config.AgentPlatformProperties;
+import ai.qubere.agent.secrets.AgentSecretResolver;
 
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
@@ -18,14 +19,21 @@ import org.springframework.web.client.RestClient;
 public class HttpAgentCallbackDispatcher implements AgentCallbackDispatcher {
 
     private static final String HMAC_SHA256 = "HmacSHA256";
+    private static final String SIGNING_SECRET_NAME = "agent-platform.async.callback.signing-secret";
 
     private final RestClient restClient;
     private final AgentPlatformProperties.Async.Callback properties;
+    private final AgentSecretResolver secretResolver;
 
     public HttpAgentCallbackDispatcher(RestClient.Builder restClientBuilder, AgentPlatformProperties properties) {
+        this(restClientBuilder, properties, null);
+    }
+
+    public HttpAgentCallbackDispatcher(RestClient.Builder restClientBuilder, AgentPlatformProperties properties, AgentSecretResolver secretResolver) {
         this.properties = properties == null
                 ? new AgentPlatformProperties.Async.Callback()
                 : properties.getAsync().getCallback();
+        this.secretResolver = secretResolver;
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(Duration.ofSeconds(this.properties.getTimeoutSeconds()));
         requestFactory.setReadTimeout(Duration.ofSeconds(this.properties.getTimeoutSeconds()));
@@ -69,7 +77,7 @@ public class HttpAgentCallbackDispatcher implements AgentCallbackDispatcher {
     }
 
     private String signature(AgentRunCallback callback) {
-        String secret = properties.getSigningSecret();
+        String secret = resolveSigningSecret();
         if (secret == null || secret.isBlank()) {
             return null;
         }
@@ -81,5 +89,12 @@ public class HttpAgentCallbackDispatcher implements AgentCallbackDispatcher {
         } catch (NoSuchAlgorithmException | InvalidKeyException ex) {
             throw new IllegalStateException("Unable to sign agent callback", ex);
         }
+    }
+
+    private String resolveSigningSecret() {
+        if (secretResolver != null) {
+            return secretResolver.resolve(SIGNING_SECRET_NAME).orElseGet(properties::getSigningSecret);
+        }
+        return properties.getSigningSecret();
     }
 }

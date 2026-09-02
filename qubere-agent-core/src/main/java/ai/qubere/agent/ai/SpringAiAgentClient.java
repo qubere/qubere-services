@@ -1,9 +1,14 @@
 package ai.qubere.agent.ai;
 
+import ai.qubere.agent.core.AgentErrorCode;
+import ai.qubere.agent.core.AgentExecutionException;
 import ai.qubere.agent.redaction.AgentRedactionService;
 import ai.qubere.agent.redaction.DefaultAgentRedactionService;
+import ai.qubere.agent.resilience.AgentResilienceGateway;
+import ai.qubere.agent.runtime.config.AgentPlatformProperties;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -28,22 +33,31 @@ public class SpringAiAgentClient implements AgentAiClient {
     private final ChatClient chatClient;
     private final ModelUsageRecorder modelUsageRecorder;
     private final AgentRedactionService redactionService;
+    private final AgentPlatformProperties properties;
+    private final ModelCostBudgetTracker costBudgetTracker;
+    private final AgentResilienceGateway resilienceGateway;
 
     public SpringAiAgentClient(ChatClient.Builder chatClientBuilder, ObjectProvider<ModelUsageRecorder> modelUsageRecorder) {
-        this(chatClientBuilder, modelUsageRecorder, null);
+        this(chatClientBuilder, modelUsageRecorder, null, null, null, null);
     }
 
     @Autowired
     public SpringAiAgentClient(
             ChatClient.Builder chatClientBuilder,
             ObjectProvider<ModelUsageRecorder> modelUsageRecorder,
-            ObjectProvider<AgentRedactionService> redactionService
+            ObjectProvider<AgentRedactionService> redactionService,
+            ObjectProvider<AgentPlatformProperties> properties,
+            ObjectProvider<ModelCostBudgetTracker> costBudgetTracker,
+            ObjectProvider<AgentResilienceGateway> resilienceGateway
     ) {
         this.chatClient = chatClientBuilder.build();
         this.modelUsageRecorder = modelUsageRecorder.getIfAvailable(ModelUsageRecorder::noop);
         this.redactionService = redactionService == null
                 ? new DefaultAgentRedactionService()
                 : redactionService.getIfAvailable(DefaultAgentRedactionService::new);
+        this.properties = properties == null ? new AgentPlatformProperties() : properties.getIfAvailable(AgentPlatformProperties::new);
+        this.costBudgetTracker = costBudgetTracker == null ? new ModelCostBudgetTracker() : costBudgetTracker.getIfAvailable(ModelCostBudgetTracker::new);
+        this.resilienceGateway = resilienceGateway == null ? AgentResilienceGateway.noop() : resilienceGateway.getIfAvailable(AgentResilienceGateway::noop);
     }
 
     @Override
@@ -52,8 +66,46 @@ public class SpringAiAgentClient implements AgentAiClient {
     }
 
     @Override
+    public reactor.core.publisher.Flux<String> generateStream(AgentPrompt prompt, AgentAiRequestMetadata metadata) {
+        AgentAiRequestMetadata requestMetadata = metadata == null ? AgentAiRequestMetadata.empty() : metadata;
+        enforceCostBudgetBeforeCall(requestMetadata);
+        String usageId = UUID.randomUUID().toString();
+        Instant startedAt = Instant.now();
+        Map<String, Object> usageMetadata = new LinkedHashMap<>(requestMetadata.metadata());
+        usageMetadata.put("responseType", "stream");
+        usageMetadata.put("streamingRequested", true);
+        usageMetadata.put("temperature", requestMetadata.temperature());
+        usageMetadata.put("maxOutputTokens", requestMetadata.maxOutputTokens());
+        applyPromptLogging(prompt, requestMetadata, usageMetadata);
+
+        modelUsageRecorder.record(record(
+                usageId, requestMetadata, ModelUsageStatus.STARTED,
+                null, null, null, null, null, null, usageMetadata, startedAt, null
+        ));
+
+        ChatClient.ChatClientRequestSpec request = chatClient.prompt()
+                .system(prompt.system())
+                .user(prompt.user());
+        ChatClient.ChatClientRequestSpec finalRequest = applyOptions(request, requestMetadata, usageMetadata);
+        String resilienceKey = "ai:" + (requestMetadata.modelName() == null ? "default" : requestMetadata.modelName());
+
+        return resilienceGateway.execute(resilienceKey, () -> finalRequest.stream().content())
+                .doOnComplete(() -> modelUsageRecorder.record(record(
+                        usageId, requestMetadata, ModelUsageStatus.SUCCEEDED,
+                        null, null, null, null,
+                        Duration.between(startedAt, Instant.now()).toMillis(), null, usageMetadata, startedAt, Instant.now()
+                )))
+                .doOnError(ex -> modelUsageRecorder.record(record(
+                        usageId, requestMetadata, ModelUsageStatus.FAILED,
+                        null, null, null, null,
+                        Duration.between(startedAt, Instant.now()).toMillis(), ex.getMessage(), usageMetadata, startedAt, Instant.now()
+                )));
+    }
+
+    @Override
     public <T> T generate(AgentPrompt prompt, Class<T> responseType, AgentAiRequestMetadata metadata) {
         AgentAiRequestMetadata requestMetadata = metadata == null ? AgentAiRequestMetadata.empty() : metadata;
+        enforceCostBudgetBeforeCall(requestMetadata);
         String usageId = UUID.randomUUID().toString();
         Instant startedAt = Instant.now();
         Map<String, Object> usageMetadata = new LinkedHashMap<>(requestMetadata.metadata());
@@ -82,13 +134,18 @@ public class SpringAiAgentClient implements AgentAiClient {
             ChatClient.ChatClientRequestSpec request = chatClient.prompt()
                     .system(prompt.system())
                     .user(prompt.user());
-            request = applyOptions(request, requestMetadata, usageMetadata);
+            ChatClient.ChatClientRequestSpec finalRequest = applyOptions(request, requestMetadata, usageMetadata);
 
-            ResponseEntity<ChatResponse, T> responseEntity = request
-                    .call()
-                    .responseEntity(responseType);
+            String resilienceKey = "ai:" + (requestMetadata.modelName() == null ? "default" : requestMetadata.modelName());
+            ResponseEntity<ChatResponse, T> responseEntity = resilienceGateway.execute(
+                    resilienceKey,
+                    () -> finalRequest.call().responseEntity(responseType)
+            );
             Instant completedAt = Instant.now();
-            UsageValues usageValues = extractUsage(responseEntity.response(), usageMetadata);
+            UsageValues usageValues = extractUsage(responseEntity.response(), usageMetadata, requestMetadata);
+            if (usageValues.estimatedCostUsd() != null) {
+                costBudgetTracker.charge(requestMetadata.executionId(), usageValues.estimatedCostUsd());
+            }
             modelUsageRecorder.record(record(
                     usageId,
                     requestMetadata,
@@ -121,6 +178,27 @@ public class SpringAiAgentClient implements AgentAiClient {
                     completedAt
             ));
             throw ex;
+        }
+    }
+
+    /**
+     * Enforces the hard cost budget before issuing a model call. Each agent execution may call
+     * the model multiple times; the cap resolved onto {@code ResolvedAgentPolicy.maxEstimatedCostUsd()}
+     * applies to the cumulative spend across all calls in that execution, tracked by
+     * {@link ModelCostBudgetTracker}. A cap of {@code null} or non-positive disables enforcement.
+     */
+    private void enforceCostBudgetBeforeCall(AgentAiRequestMetadata requestMetadata) {
+        BigDecimal cap = requestMetadata.maxEstimatedCostUsd();
+        if (cap == null || cap.signum() <= 0) {
+            return;
+        }
+        BigDecimal spentSoFar = costBudgetTracker.currentSpend(requestMetadata.executionId());
+        if (spentSoFar.compareTo(cap) >= 0) {
+            throw new AgentExecutionException(
+                    AgentErrorCode.GOVERNANCE_LIMIT_EXCEEDED,
+                    "Model call rejected: estimated spend %s USD already at or above configured maxEstimatedCostUsd %s USD for execution %s"
+                            .formatted(spentSoFar.stripTrailingZeros().toPlainString(), cap.stripTrailingZeros().toPlainString(), requestMetadata.executionId())
+            );
         }
     }
 
@@ -161,7 +239,7 @@ public class SpringAiAgentClient implements AgentAiClient {
         return hasOptions ? request.options(options) : request;
     }
 
-    private UsageValues extractUsage(ChatResponse response, Map<String, Object> usageMetadata) {
+    private UsageValues extractUsage(ChatResponse response, Map<String, Object> usageMetadata, AgentAiRequestMetadata requestMetadata) {
         if (response == null || response.getMetadata() == null) {
             return UsageValues.empty();
         }
@@ -190,7 +268,38 @@ public class SpringAiAgentClient implements AgentAiClient {
         if (usage.getCacheWriteInputTokens() != null) {
             usageMetadata.put("cacheWriteInputTokens", usage.getCacheWriteInputTokens());
         }
-        return new UsageValues(inputTokens, outputTokens, totalTokens, null);
+        BigDecimal estimatedCostUsd = estimateCost(requestMetadata.modelName(), inputTokens, outputTokens);
+        return new UsageValues(inputTokens, outputTokens, totalTokens, estimatedCostUsd);
+    }
+
+    /**
+     * Computes estimated cost from the configured {@code agent-platform.ai.tariffs.<model>}
+     * pricing. Returns {@code null} when the model has no configured tariff, matching prior
+     * behavior of leaving {@code estimatedCostUsd} unset until tariffs are configured.
+     */
+    private BigDecimal estimateCost(String modelName, Long inputTokens, Long outputTokens) {
+        if (modelName == null) {
+            return null;
+        }
+        AgentPlatformProperties.ModelTariff tariff = properties.getAi().getTariffs().get(modelName);
+        if (tariff == null) {
+            return null;
+        }
+        BigDecimal inputCost = costFor(inputTokens, tariff.getInputCostUsdPerThousandTokens());
+        BigDecimal outputCost = costFor(outputTokens, tariff.getOutputCostUsdPerThousandTokens());
+        if (inputCost == null && outputCost == null) {
+            return null;
+        }
+        return (inputCost == null ? BigDecimal.ZERO : inputCost).add(outputCost == null ? BigDecimal.ZERO : outputCost);
+    }
+
+    private BigDecimal costFor(Long tokens, BigDecimal costPerThousand) {
+        if (tokens == null || costPerThousand == null || costPerThousand.signum() <= 0) {
+            return null;
+        }
+        return BigDecimal.valueOf(tokens)
+                .divide(BigDecimal.valueOf(1000), 8, RoundingMode.HALF_UP)
+                .multiply(costPerThousand);
     }
 
     private Long toLong(Integer value) {

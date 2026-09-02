@@ -16,10 +16,20 @@ import ai.qubere.agent.core.GenericAgentInput;
 import ai.qubere.agent.evaluation.EvaluationCaseResult;
 import ai.qubere.agent.evaluation.EvaluationResult;
 import ai.qubere.agent.evaluation.EvaluationStatus;
+import ai.qubere.agent.evaluation.GoldenDataset;
+import ai.qubere.agent.evaluation.GoldenExample;
 import ai.qubere.agent.prompts.PromptStatus;
 import ai.qubere.agent.prompts.PromptTemplate;
 import ai.qubere.agent.runtime.AgentPipelineEvent;
 import ai.qubere.agent.runtime.AgentPipelineStep;
+import ai.qubere.agent.runtime.AgentWorkflowBudget;
+import ai.qubere.agent.runtime.AgentWorkflowContext;
+import ai.qubere.agent.core.AgentErrorCode;
+import ai.qubere.agent.core.AgentExecutionException;
+import ai.qubere.agent.checkpoint.AgentCheckpoint;
+import ai.qubere.agent.orchestration.AgentWorkflowService;
+import ai.qubere.agent.orchestration.AgentWorkflowStatus;
+import ai.qubere.agent.orchestration.AgentWorkflowSummary;
 import ai.qubere.agent.tools.ToolAuditEvent;
 import ai.qubere.agent.tools.ToolCallRecord;
 import ai.qubere.agent.tools.ToolCallStatus;
@@ -43,6 +53,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(properties = {
         "spring.jpa.hibernate.ddl-auto=create-drop",
@@ -99,6 +110,21 @@ class AgentPersistenceH2Test {
     @Autowired
     private JpaEvaluationResultStore evaluationResultStore;
 
+    @Autowired
+    private AgentCheckpointRepository checkpointRepository;
+
+    @Autowired
+    private JpaAgentCheckpointStore checkpointStore;
+
+    @Autowired
+    private AgentWorkflowBudgetRepository workflowBudgetRepository;
+
+    @Autowired
+    private AgentEvaluationDatasetRepository evaluationDatasetRepository;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
     @Test
     void persistsAgentExecutionLifecycleWithH2() {
         AgentExecutionContext context = new AgentExecutionContext("exec-h2", "tenant", "actor", "corr", Instant.now(), Map.of());
@@ -114,6 +140,167 @@ class AgentPersistenceH2Test {
                     assertThat(record.status()).isEqualTo(AgentRunStatus.SUCCEEDED);
                     assertThat(record.outputJson()).contains("\"ok\":true");
                 });
+    }
+
+    @Test
+    void persistsWorkflowLinkageAndRollsUpMultiAgentWorkflowWithH2() {
+        AgentDescriptor orchestrator = new AgentDescriptor("wf.orchestrator", "Orchestrator", "1.0.0", "Test", AgentRiskLevel.LOW, Set.of());
+        AgentDescriptor subAgent = new AgentDescriptor("wf.sub", "Sub", "1.0.0", "Test", AgentRiskLevel.LOW, Set.of());
+
+        AgentExecutionContext rootContext = new AgentExecutionContext(
+                "wf-root", "tenant", "actor", "corr", Instant.now(),
+                Map.of(AgentWorkflowContext.WORKFLOW_ID, "wf-root")
+        );
+        executionStore.markStarted(rootContext, orchestrator, new GenericAgentInput(Map.of("message", "orchestrate")));
+
+        AgentExecutionContext childContext = AgentWorkflowContext.childOf(rootContext, "wf-child-1");
+        executionStore.markStarted(childContext, subAgent, new GenericAgentInput(Map.of("message", "sub work")));
+
+        executionStore.markCompleted("wf-child-1", new AgentResult<>(Map.of("ok", true), null, List.of(), Map.of()));
+        executionStore.markCompleted("wf-root", new AgentResult<>(Map.of("ok", true), null, List.of(), Map.of()));
+
+        assertThat(executionStore.findByExecutionId("wf-child-1"))
+                .isPresent()
+                .get()
+                .satisfies(record -> {
+                    assertThat(record.workflowId()).isEqualTo("wf-root");
+                    assertThat(record.parentExecutionId()).isEqualTo("wf-root");
+                    assertThat(record.isWorkflowRoot()).isFalse();
+                });
+
+        assertThat(executionStore.findByExecutionId("wf-root"))
+                .isPresent()
+                .get()
+                .satisfies(record -> assertThat(record.isWorkflowRoot()).isTrue());
+
+        AgentWorkflowSummary summary = new AgentWorkflowService(executionStore).summarize("wf-root");
+        assertThat(summary.totalExecutions()).isEqualTo(2);
+        assertThat(summary.status()).isEqualTo(AgentWorkflowStatus.SUCCEEDED);
+        assertThat(summary.root()).isNotNull();
+        assertThat(summary.root().executionId()).isEqualTo("wf-root");
+    }
+
+    @Test
+    void persistsCheckpointsForRestartSafeMultiStepResumeWithH2() {
+        checkpointStore.save(new AgentCheckpoint("exec-ckpt", "charge-card", 1, "\"txn-1\"", Instant.now()));
+        checkpointStore.save(new AgentCheckpoint("exec-ckpt", "reserve-stock", 2, "\"res-1\"", Instant.now()));
+
+        assertThat(checkpointStore.find("exec-ckpt", "charge-card"))
+                .isPresent()
+                .get()
+                .satisfies(checkpoint -> assertThat(checkpoint.resultJson()).isEqualTo("\"txn-1\""));
+
+        assertThat(checkpointStore.findByExecutionId("exec-ckpt"))
+                .hasSize(2)
+                .extracting(AgentCheckpoint::stepName)
+                .containsExactly("charge-card", "reserve-stock");
+
+        // Re-saving the same step must update in place rather than duplicate, so a retried save
+        // during resume cannot corrupt step history.
+        checkpointStore.save(new AgentCheckpoint("exec-ckpt", "charge-card", 1, "\"txn-updated\"", Instant.now()));
+        assertThat(checkpointStore.findByExecutionId("exec-ckpt")).hasSize(2);
+        assertThat(checkpointStore.find("exec-ckpt", "charge-card"))
+                .get()
+                .satisfies(checkpoint -> assertThat(checkpoint.resultJson()).isEqualTo("\"txn-updated\""));
+
+        checkpointStore.deleteByExecutionId("exec-ckpt");
+        assertThat(checkpointStore.findByExecutionId("exec-ckpt")).isEmpty();
+    }
+
+    @Test
+    void distributedBudgetEnforcesOneCeilingAcrossServices() {
+        // Simulates two services participating in the same workflow. Each gets its own
+        // AgentWorkflowBudget object, exactly as separate JVMs would, but both consume the same
+        // shared record — so the ceiling is enforced once in total, not once per service.
+        JpaDistributedWorkflowBudgetStore budgetStore =
+                new JpaDistributedWorkflowBudgetStore(workflowBudgetRepository, transactionManager);
+
+        AgentWorkflowBudget serviceA = new AgentWorkflowBudget(3, 0, BigDecimal.ZERO, budgetStore, "wf-distributed");
+        AgentWorkflowBudget serviceB = new AgentWorkflowBudget(3, 0, BigDecimal.ZERO, budgetStore, "wf-distributed");
+
+        assertThat(serviceA.isDistributed()).isTrue();
+
+        serviceA.consumeAgentInvocation("agent.a1");
+        serviceB.consumeAgentInvocation("agent.b1");
+        serviceA.consumeAgentInvocation("agent.a2");
+
+        // Three invocations already consumed across both services; the fourth must be rejected
+        // even though neither service individually issued more than two.
+        assertThatThrownBy(() -> serviceB.consumeAgentInvocation("agent.b2"))
+                .isInstanceOfSatisfying(AgentExecutionException.class, exception ->
+                        assertThat(exception.errorCode()).isEqualTo(AgentErrorCode.GOVERNANCE_LIMIT_EXCEEDED));
+
+        budgetStore.release("wf-distributed");
+    }
+
+    @Test
+    void distributedBudgetAccumulatesCostAcrossParticipants() {
+        JpaDistributedWorkflowBudgetStore budgetStore =
+                new JpaDistributedWorkflowBudgetStore(workflowBudgetRepository, transactionManager);
+
+        AgentWorkflowBudget serviceA = new AgentWorkflowBudget(0, 0, new BigDecimal("1.00"), budgetStore, "wf-cost");
+        AgentWorkflowBudget serviceB = new AgentWorkflowBudget(0, 0, new BigDecimal("1.00"), budgetStore, "wf-cost");
+
+        serviceA.consumeCost(new BigDecimal("0.60"));
+
+        assertThatThrownBy(() -> serviceB.consumeCost(new BigDecimal("0.60")))
+                .isInstanceOfSatisfying(AgentExecutionException.class, exception ->
+                        assertThat(exception.errorCode()).isEqualTo(AgentErrorCode.GOVERNANCE_LIMIT_EXCEEDED));
+
+        budgetStore.release("wf-cost");
+    }
+
+    @Test
+    void releasingDistributedBudgetResetsWorkflowUsage() {
+        JpaDistributedWorkflowBudgetStore budgetStore =
+                new JpaDistributedWorkflowBudgetStore(workflowBudgetRepository, transactionManager);
+        AgentWorkflowBudget budget = new AgentWorkflowBudget(1, 0, BigDecimal.ZERO, budgetStore, "wf-release");
+
+        budget.consumeAgentInvocation("agent.a");
+        budgetStore.release("wf-release");
+
+        // After release the workflow starts fresh rather than staying permanently exhausted.
+        assertThat(budget.consumeAgentInvocation("agent.b")).isEqualTo(1);
+        budgetStore.release("wf-release");
+    }
+
+    @Test
+    void persistsOperationallyCuratedGoldenDatasetsWithH2() {
+        JpaGoldenDatasetRepository datasetRepository =
+                new JpaGoldenDatasetRepository(evaluationDatasetRepository, new com.fasterxml.jackson.databind.ObjectMapper());
+
+        GoldenDataset dataset = new GoldenDataset(
+                "invoice-regressions",
+                "Cases grown from production failures",
+                List.of(new GoldenExample(
+                        "case-1",
+                        "invoice.review",
+                        "1.0.0",
+                        Map.of("invoiceId", "inv-1"),
+                        Map.of("decision", "APPROVE"),
+                        null
+                )),
+                Map.of("owner", "finance-team")
+        );
+
+        datasetRepository.save(dataset);
+
+        assertThat(datasetRepository.find("invoice-regressions"))
+                .isPresent()
+                .get()
+                .satisfies(stored -> {
+                    assertThat(stored.description()).isEqualTo("Cases grown from production failures");
+                    assertThat(stored.metadata()).containsEntry("owner", "finance-team");
+                    assertThat(stored.examples()).hasSize(1);
+                    assertThat(stored.examples().get(0).agentId()).isEqualTo("invoice.review");
+                    assertThat(stored.examples().get(0).expectedOutput()).containsEntry("decision", "APPROVE");
+                });
+
+        // Saving the same name updates in place rather than creating a duplicate dataset.
+        datasetRepository.save(new GoldenDataset("invoice-regressions", "Updated", List.of(), Map.of()));
+        assertThat(datasetRepository.list()).hasSize(1);
+        assertThat(datasetRepository.find("invoice-regressions")).get()
+                .satisfies(stored -> assertThat(stored.description()).isEqualTo("Updated"));
     }
 
     @Test

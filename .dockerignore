@@ -1,0 +1,21 @@
+# Keep Docker build contexts small and reproducible: excludes build output, VCS metadata, IDE
+# state, and anything that would let a stale local build leak into the image (see the
+# stale-target/-bytecode bug documented in agent-framework.md).
+**/target/
+**/*.class
+
+.git/
+.github/
+.gitignore
+
+.idea/
+*.iml
+.vscode/
+*.log
+
+**/*.md
+
+.dockerignore
+Dockerfile
+**/Dockerfile
+docker-compose*.yml

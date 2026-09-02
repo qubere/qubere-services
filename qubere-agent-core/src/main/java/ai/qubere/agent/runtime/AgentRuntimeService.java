@@ -24,6 +24,7 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -39,6 +40,8 @@ public class AgentRuntimeService {
     private final Collection<AgentGovernanceService> governanceServices;
     private final Collection<AgentPipelineListener> pipelineListeners;
     private final Executor invocationExecutor;
+    private final ai.qubere.agent.checkpoint.AgentCheckpointStore checkpointStore;
+    private final com.fasterxml.jackson.databind.ObjectMapper checkpointObjectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
     public AgentRuntimeService(
             AgentRegistry registry,
@@ -51,7 +54,6 @@ public class AgentRuntimeService {
         this(registry, policyResolver, authorizationService, guardrailService, executionStore, auditService, List.of(), List.of());
     }
 
-    @Autowired
     public AgentRuntimeService(
             AgentRegistry registry,
             AgentPolicyResolver policyResolver,
@@ -63,6 +65,24 @@ public class AgentRuntimeService {
             Collection<AgentPipelineListener> pipelineListeners
     ) {
         this(registry, policyResolver, authorizationService, guardrailService, executionStore, auditService, governanceServices, pipelineListeners, ForkJoinPool.commonPool());
+    }
+
+    @Autowired
+    public AgentRuntimeService(
+            AgentRegistry registry,
+            AgentPolicyResolver policyResolver,
+            AgentAuthorizationService authorizationService,
+            AgentGuardrailService guardrailService,
+            AgentExecutionStore executionStore,
+            AgentAuditService auditService,
+            Collection<AgentGovernanceService> governanceServices,
+            Collection<AgentPipelineListener> pipelineListeners,
+            @org.springframework.beans.factory.annotation.Qualifier("agentInvocationExecutor") ObjectProvider<Executor> invocationExecutorProvider,
+            ObjectProvider<ai.qubere.agent.checkpoint.AgentCheckpointStore> checkpointStoreProvider
+    ) {
+        this(registry, policyResolver, authorizationService, guardrailService, executionStore, auditService, governanceServices, pipelineListeners,
+                invocationExecutorProvider.getIfAvailable(ForkJoinPool::commonPool),
+                checkpointStoreProvider.getIfAvailable(ai.qubere.agent.checkpoint.AgentCheckpointStore::noop));
     }
 
     public AgentRuntimeService(
@@ -88,6 +108,22 @@ public class AgentRuntimeService {
             Collection<AgentPipelineListener> pipelineListeners,
             Executor invocationExecutor
     ) {
+        this(registry, policyResolver, authorizationService, guardrailService, executionStore, auditService,
+                governanceServices, pipelineListeners, invocationExecutor, null);
+    }
+
+    AgentRuntimeService(
+            AgentRegistry registry,
+            AgentPolicyResolver policyResolver,
+            AgentAuthorizationService authorizationService,
+            AgentGuardrailService guardrailService,
+            AgentExecutionStore executionStore,
+            AgentAuditService auditService,
+            Collection<AgentGovernanceService> governanceServices,
+            Collection<AgentPipelineListener> pipelineListeners,
+            Executor invocationExecutor,
+            ai.qubere.agent.checkpoint.AgentCheckpointStore checkpointStore
+    ) {
         this.registry = registry;
         this.policyResolver = policyResolver;
         this.authorizationService = authorizationService;
@@ -97,6 +133,9 @@ public class AgentRuntimeService {
         this.governanceServices = governanceServices == null ? List.of() : List.copyOf(governanceServices);
         this.pipelineListeners = pipelineListeners == null ? List.of() : List.copyOf(pipelineListeners);
         this.invocationExecutor = invocationExecutor == null ? ForkJoinPool.commonPool() : invocationExecutor;
+        this.checkpointStore = checkpointStore == null
+                ? ai.qubere.agent.checkpoint.AgentCheckpointStore.noop()
+                : checkpointStore;
     }
 
     public AgentOutput run(String agentId, AgentInput input, AgentExecutionContext context, AgentRunOptions options) {
@@ -114,12 +153,19 @@ public class AgentRuntimeService {
         Agent<?, ?> agent = registeredAgent.agent();
 
         publish(AgentPipelineStep.AGENT_RESOLUTION, context, agent.descriptor(), "Agent resolved");
-        ResolvedAgentPolicy resolvedPolicy = policyResolver.resolve(agentId, options);
+        ResolvedAgentPolicy resolvedPolicy = policyResolver.resolve(agentId, options, agent.descriptor().riskLevel());
         if (!resolvedPolicy.enabled()) {
             throw new AgentExecutionException(AgentErrorCode.AGENT_DISABLED, "Agent is disabled: " + agentId);
         }
         AgentExecutionContext executionContext = withResolvedPolicy(context, resolvedPolicy, agent.descriptor());
         publish(AgentPipelineStep.POLICY_RESOLUTION, context, agent.descriptor(), "Policy resolved");
+
+        // Aggregate workflow ceiling is consumed per agent invocation, so an orchestrator cannot
+        // multiply total work by spawning sub-agents that each stay under their own per-run limit.
+        AgentWorkflowBudget workflowBudget = AgentWorkflowContext.workflowBudget(executionContext);
+        if (workflowBudget != null) {
+            workflowBudget.consumeAgentInvocation(agentId);
+        }
 
         if (!authorizationService.canRun(executionContext, agent.descriptor())) {
             publish(AgentPipelineStep.AUTHORIZATION, executionContext, agent.descriptor(), "Authorization denied");
@@ -145,8 +191,12 @@ public class AgentRuntimeService {
             governanceServices.forEach(governance -> governance.afterRun(executionContext, agent.descriptor(), output));
             auditService.recordStatus(executionContext, agent.descriptor(), AgentRunStatus.SUCCEEDED, "Agent execution completed");
             publish(AgentPipelineStep.EXECUTION_COMPLETED, executionContext, agent.descriptor(), "Execution completed");
+            // The run reached a terminal state, so its resume checkpoints are no longer needed.
+            checkpointStore.deleteByExecutionId(executionContext.executionId());
             return output;
         } catch (ToolApprovalRequiredException ex) {
+            // Deliberately do NOT clear checkpoints here: the execution is paused, not finished,
+            // and the recorded steps are exactly what lets it resume without redoing work.
             auditService.recordStatus(executionContext, agent.descriptor(), AgentRunStatus.WAITING_FOR_APPROVAL, ex.getMessage());
             publish(AgentPipelineStep.EXECUTION_FAILED, executionContext, agent.descriptor(), ex.getMessage());
             throw ex;
@@ -154,6 +204,7 @@ public class AgentRuntimeService {
             executionStore.markFailed(executionContext.executionId(), ex);
             auditService.recordStatus(executionContext, agent.descriptor(), AgentRunStatus.FAILED, ex.getMessage());
             publish(AgentPipelineStep.EXECUTION_FAILED, executionContext, agent.descriptor(), ex.getMessage());
+            checkpointStore.deleteByExecutionId(executionContext.executionId());
             throw ex;
         }
     }
@@ -243,6 +294,12 @@ public class AgentRuntimeService {
         attributes.put("agentRunBudget", new AgentRunBudget(policy));
         attributes.put("agentId", descriptor.id());
         attributes.put("agentVersion", descriptor.version());
+        // Published so a multi-step agent can memoize completed steps and resume across an
+        // approval interruption without repeating their side effects.
+        attributes.put(
+                ai.qubere.agent.checkpoint.AgentCheckpointScope.CONTEXT_ATTRIBUTE,
+                new ai.qubere.agent.checkpoint.AgentCheckpointScope(context.executionId(), checkpointStore, checkpointObjectMapper)
+        );
         return new AgentExecutionContext(
                 context.executionId(),
                 context.tenantId(),
