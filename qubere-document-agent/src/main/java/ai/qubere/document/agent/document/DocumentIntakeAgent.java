@@ -41,21 +41,33 @@ public class DocumentIntakeAgent implements Agent<GenericAgentInput, AgentResult
         String fileName = text(values.get("fileName"));
         String mimeType = text(values.get("mimeType"));
         String overrideType = text(values.get("docTypeOverride"));
-        String detectedType = !overrideType.isBlank() ? overrideType : detectFromName(fileName);
+        String headerTextExcerpt = text(values.get("headerTextExcerpt"));
+
+        // Catalog-first on every path: an explicit override is an exact catalog lookup, and the
+        // signal used when no override is supplied (header text excerpt from a parser, falling
+        // back to the file name) goes through the same DocumentTypeCatalog.matchDocumentType()
+        // algorithm a real classification signal would use. There is deliberately no separate,
+        // simpler filename-only heuristic path anymore: unifying both cases onto one matcher is
+        // what the original migration plan flagged as the required fix.
+        String classificationSignal = !headerTextExcerpt.isBlank() ? headerTextExcerpt : fileName;
+        DocumentTypeDefinition matched = !overrideType.isBlank()
+                ? DocumentTypeCatalog.byCode(overrideType).orElseGet(() -> DocumentTypeCatalog.matchDocumentType(overrideType))
+                : DocumentTypeCatalog.matchDocumentType(classificationSignal);
+        String detectedType = matched.code();
         int pageCount = number(values.get("pageCount"), 1);
-        double confidence = !overrideType.isBlank() ? 1.0d : confidenceFor(fileName, detectedType);
-        boolean needsReview = confidence < 0.70d || detectedType.equals("OTHER");
+        double confidence = !overrideType.isBlank() ? 1.0d : confidenceFor(classificationSignal, detectedType);
+        boolean needsReview = confidence < 0.70d || detectedType.equals(DocumentTypeCatalog.OTHER_UNVERIFIED_DOCUMENT);
 
         List<Map<String, Object>> classifications = new ArrayList<>();
         classifications.add(Map.of(
                 "pageNumber", 1,
                 "docTypeCode", detectedType,
-                "docTypeName", detectedType.replace('_', ' '),
+                "docTypeName", matched.name(),
                 "confidence", Math.round(confidence * 100),
                 "isHandwritten", false,
                 "hasIllegibleStamps", false,
                 "orientationDegrees", 0,
-                "headerTextExcerpt", fileName.isBlank() ? "No file name supplied" : fileName
+                "headerTextExcerpt", classificationSignal.isBlank() ? "No file name or header text supplied" : classificationSignal
         ));
 
         Map<String, Object> output = Map.ofEntries(
@@ -69,6 +81,8 @@ public class DocumentIntakeAgent implements Agent<GenericAgentInput, AgentResult
                 Map.entry("pageCount", pageCount),
                 Map.entry("classifications", classifications),
                 Map.entry("detectedTypes", List.of(detectedType)),
+                Map.entry("isRequiredForFiling", matched.isRequiredForFiling()),
+                Map.entry("cfrRegulation", matched.cfrRegulation() == null ? "" : matched.cfrRegulation()),
                 Map.entry("missingRequiredDocs", List.of()),
                 Map.entry("migrationStatus", "initial-java-port")
         );
@@ -80,27 +94,18 @@ public class DocumentIntakeAgent implements Agent<GenericAgentInput, AgentResult
                         needsReview ? "Document type is uncertain and should be reviewed." : "Document packet can continue to extraction.",
                         confidence
                 ),
-                List.of(new AgentEvidenceDraft("fileName", fileName, "Document intake currently uses supplied metadata until parser/vision tools are migrated.")),
+                List.of(new AgentEvidenceDraft("classificationSignal", classificationSignal, "Document intake classifies against the trade-document type catalog; parser-backed header text takes precedence over the file name when both are supplied.")),
                 Map.of("agentId", AGENT_ID, "source", "app-frontend migration scaffold")
         );
     }
 
-    private String detectFromName(String fileName) {
-        String lower = fileName == null ? "" : fileName.toLowerCase();
-        if (lower.contains("invoice")) return "COMMERCIAL_INVOICE";
-        if (lower.contains("packing")) return "PACKING_LIST";
-        if (lower.contains("bill") || lower.contains("bol")) return "OCEAN_BILL_OF_LADING";
-        if (lower.contains("airway") || lower.contains("awb")) return "AIR_WAYBILL";
-        if (lower.contains("origin") || lower.contains("certificate")) return "GENERAL_CERTIFICATE_OF_ORIGIN";
-        return "OTHER";
-    }
-
-    private double confidenceFor(String fileName, String detectedType) {
-        if (fileName == null || fileName.isBlank() || detectedType.equals("OTHER")) {
+    private double confidenceFor(String classificationSignal, String detectedType) {
+        if (classificationSignal == null || classificationSignal.isBlank() || detectedType.equals(DocumentTypeCatalog.OTHER_UNVERIFIED_DOCUMENT)) {
             return 0.45d;
         }
         return 0.75d;
     }
+
 
     private int number(Object value, int fallback) {
         if (value instanceof Number number) {
