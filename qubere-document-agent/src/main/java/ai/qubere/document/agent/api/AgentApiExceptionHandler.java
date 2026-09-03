@@ -115,6 +115,15 @@ public class AgentApiExceptionHandler {
                 .body(ApiErrorResponse.of(status.value(), AgentErrorCode.NOT_FOUND.name(), exception.getMessage(), request.getRequestURI()));
     }
 
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    ResponseEntity<ApiErrorResponse> handleResponseStatusException(
+            org.springframework.web.server.ResponseStatusException exception, HttpServletRequest request) {
+        HttpStatus status = HttpStatus.valueOf(exception.getStatusCode().value());
+        return ResponseEntity
+                .status(status)
+                .body(ApiErrorResponse.of(status.value(), status.name(), exception.getReason(), request.getRequestURI()));
+    }
+
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiErrorResponse> handleUnexpectedException(Exception exception, HttpServletRequest request) {
         HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
